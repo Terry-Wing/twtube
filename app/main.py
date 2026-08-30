@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from watchfiles import DefaultFilter, Change, awatch
 
 import bg_tasks
+from tg_bot import TelegramBotManager
 from ytdl import DownloadQueueNotifier, DownloadQueue, Download
 from subscriptions import SubscriptionManager, SubscriptionNotifier, SubscriptionInfo, coerce_optional_bool
 from yt_dlp.version import __version__ as yt_dlp_version
@@ -596,6 +597,11 @@ class Notifier(DownloadQueueNotifier):
     async def completed(self, dl):
         log.info(f"Notifier: Download completed - {dl.title}")
         await sio.emit('completed', serializer.encode(dl))
+        # 新增：TG 下载完成/失败通知
+        if dl.status == 'finished':
+            await tg_bot_mgr.send_notification(f"✅ <b>下载已完成</b>\n📹 名称: <code>{dl.title}</code>\n📁 路径: <code>{dl.folder or '默认'}</code>")
+        elif dl.status == 'error':
+            await tg_bot_mgr.send_notification(f"❌ <b>下载失败</b>\n📹 名称: <code>{dl.title}</code>\n⚠️ 原因: {dl.error or dl.msg}")
 
     async def canceled(self, id):
         log.info(f"Notifier: Download canceled - {id}")
@@ -606,6 +612,12 @@ class Notifier(DownloadQueueNotifier):
         await sio.emit('cleared', serializer.encode(id))
 
 dqueue = DownloadQueue(config, Notifier())
+tg_bot_mgr = TelegramBotManager(config, dqueue)
+
+async def _tg_bot_startup(app):
+    tg_bot_mgr.start()
+
+app.on_startup.append(_tg_bot_startup)
 
 
 async def _download_queue_startup(app):

@@ -69,7 +69,12 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   private destroyRef = inject(DestroyRef);
 
   addUrl!: string;
-  downloadTypes: Option[] = DOWNLOAD_TYPES;
+  downloadTypes: Option[] = [
+    { id: 'video', text: '视频 (Video)' },
+    { id: 'audio', text: '音频 (Audio)' },
+    { id: 'captions', text: '字幕 (Captions)' },
+    { id: 'thumbnail', text: '封面图 (Thumbnail)' },
+  ];
   videoCodecs: Option[] = VIDEO_CODECS;
   videoFormats: Option[] = VIDEO_FORMATS;
   audioFormats: AudioFormatOption[] = AUDIO_FORMATS;
@@ -127,9 +132,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   batchImportFailures = 0;
   importInProgress = false;
   private batchImportCancel$ = new Subject<void>();
-  // Maximum number of /add requests to have in-flight at once during a batch
-  // import. Keeps the server from being hit with hundreds of simultaneous
-  // yt-dlp metadata extractions when a user pastes a huge URL list.
   private static readonly BATCH_IMPORT_CONCURRENCY = 4;
   ytDlpOptionsUpdateTime: string | null = null;
   ytDlpVersion: string | null = null;
@@ -141,8 +143,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   subscriptionsCollapsed = false;
   expandedErrors: Set<string> = new Set<string>();
   cachedSortedDone: [string, Download][] = [];
-  // The done ids in rendered order, so a shift-click range follows the sort
-  // the user is looking at rather than the map's insertion order.
   cachedSortedDoneIds: string[] = [];
   lastCopiedErrorId: string | null = null;
   private previousDownloadType = 'video';
@@ -165,7 +165,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }
   };
 
-  // Download metrics
+  // 运行统计
   activeDownloads = 0;
   queuedDownloads = 0;
   completedDownloads = 0;
@@ -205,57 +205,60 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   faPause = faPause;
   faPlay = faPlay;
   faShareNodes = faShareNodes;
+
   subtitleLanguages = [
-    { id: 'en', text: 'English' },
-    { id: 'ar', text: 'Arabic' },
-    { id: 'bn', text: 'Bengali' },
-    { id: 'bg', text: 'Bulgarian' },
-    { id: 'ca', text: 'Catalan' },
-    { id: 'cs', text: 'Czech' },
-    { id: 'da', text: 'Danish' },
-    { id: 'nl', text: 'Dutch' },
-    { id: 'es', text: 'Spanish' },
-    { id: 'et', text: 'Estonian' },
-    { id: 'fi', text: 'Finnish' },
-    { id: 'fr', text: 'French' },
-    { id: 'de', text: 'German' },
-    { id: 'el', text: 'Greek' },
-    { id: 'he', text: 'Hebrew' },
-    { id: 'hi', text: 'Hindi' },
-    { id: 'hu', text: 'Hungarian' },
-    { id: 'id', text: 'Indonesian' },
-    { id: 'it', text: 'Italian' },
-    { id: 'lt', text: 'Lithuanian' },
-    { id: 'lv', text: 'Latvian' },
-    { id: 'ms', text: 'Malay' },
-    { id: 'no', text: 'Norwegian' },
-    { id: 'pl', text: 'Polish' },
-    { id: 'pt', text: 'Portuguese' },
-    { id: 'pt-BR', text: 'Portuguese (Brazil)' },
-    { id: 'ro', text: 'Romanian' },
-    { id: 'ru', text: 'Russian' },
-    { id: 'sk', text: 'Slovak' },
-    { id: 'sl', text: 'Slovenian' },
-    { id: 'sr', text: 'Serbian' },
-    { id: 'sv', text: 'Swedish' },
-    { id: 'ta', text: 'Tamil' },
-    { id: 'te', text: 'Telugu' },
-    { id: 'th', text: 'Thai' },
-    { id: 'tr', text: 'Turkish' },
-    { id: 'uk', text: 'Ukrainian' },
-    { id: 'ur', text: 'Urdu' },
-    { id: 'vi', text: 'Vietnamese' },
-    { id: 'ja', text: 'Japanese' },
-    { id: 'ko', text: 'Korean' },
-    { id: 'zh-Hans', text: 'Chinese (Simplified)' },
-    { id: 'zh-Hant', text: 'Chinese (Traditional)' },
+    { id: 'zh-Hans', text: '中文 (简体)' },
+    { id: 'zh-Hant', text: '中文 (繁体)' },
+    { id: 'en', text: '英语 (English)' },
+    { id: 'ja', text: '日语 (Japanese)' },
+    { id: 'ko', text: '韩语 (Korean)' },
+    { id: 'es', text: '西班牙语 (Spanish)' },
+    { id: 'fr', text: '法语 (French)' },
+    { id: 'de', text: '德语 (German)' },
+    { id: 'ru', text: '俄语 (Russian)' },
+    { id: 'ar', text: '阿拉伯语 (Arabic)' },
+    { id: 'bn', text: '孟加拉语 (Bengali)' },
+    { id: 'bg', text: '保加利亚语 (Bulgarian)' },
+    { id: 'ca', text: '加泰罗尼亚语 (Catalan)' },
+    { id: 'cs', text: '捷克语 (Czech)' },
+    { id: 'da', text: '丹麦语 (Danish)' },
+    { id: 'nl', text: '荷兰语 (Dutch)' },
+    { id: 'et', text: '爱沙尼亚语 (Estonian)' },
+    { id: 'fi', text: '芬兰语 (Finnish)' },
+    { id: 'el', text: '希腊语 (Greek)' },
+    { id: 'he', text: '希伯来语 (Hebrew)' },
+    { id: 'hi', text: '印地语 (Hindi)' },
+    { id: 'hu', text: '匈牙利语 (Hungarian)' },
+    { id: 'id', text: '印尼语 (Indonesian)' },
+    { id: 'it', text: '意大利语 (Italian)' },
+    { id: 'lt', text: '立陶宛语 (Lithuanian)' },
+    { id: 'lv', text: '拉脱维亚语 (Latvian)' },
+    { id: 'ms', text: '马来语 (Malay)' },
+    { id: 'no', text: '挪威语 (Norwegian)' },
+    { id: 'pl', text: '波兰语 (Polish)' },
+    { id: 'pt', text: '葡萄牙语 (Portuguese)' },
+    { id: 'pt-BR', text: '巴西葡萄牙语 (Portuguese-BR)' },
+    { id: 'ro', text: '罗马尼亚语 (Romanian)' },
+    { id: 'sk', text: '斯洛伐克语 (Slovak)' },
+    { id: 'sl', text: '斯洛文尼亚语 (Slovenian)' },
+    { id: 'sr', text: '塞尔维亚语 (Serbian)' },
+    { id: 'sv', text: '瑞典语 (Swedish)' },
+    { id: 'ta', text: '泰米尔语 (Tamil)' },
+    { id: 'te', text: '泰卢固语 (Telugu)' },
+    { id: 'th', text: '泰语 (Thai)' },
+    { id: 'tr', text: '土耳其语 (Turkish)' },
+    { id: 'uk', text: '乌克兰语 (Ukrainian)' },
+    { id: 'ur', text: '乌尔都语 (Urdu)' },
+    { id: 'vi', text: '越南语 (Vietnamese)' },
   ];
+
   subtitleModes = [
-    { id: 'prefer_manual', text: 'Prefer Manual' },
-    { id: 'prefer_auto', text: 'Prefer Auto' },
-    { id: 'manual_only', text: 'Manual Only' },
-    { id: 'auto_only', text: 'Auto Only' },
+    { id: 'prefer_manual', text: '优先手动字幕 (Prefer Manual)' },
+    { id: 'prefer_auto', text: '优先自动生成字幕 (Prefer Auto)' },
+    { id: 'manual_only', text: '仅下载手动字幕 (Manual Only)' },
+    { id: 'auto_only', text: '仅下载自动生成字幕 (Auto Only)' },
   ];
+
   constructor() {
     this.downloadType = this.cookieService.get('metube_download_type') || 'video';
     this.codec = this.cookieService.get('metube_codec') || 'auto';
@@ -264,11 +267,10 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.autoStart = this.cookieService.get('metube_auto_start') !== 'false';
     this.splitByChapters = this.cookieService.get('metube_split_chapters') === 'true';
     this.sponsorblock = this.cookieService.get('metube_sponsorblock') === 'true';
-    // Will be set from backend configuration, use empty string as placeholder
     this.chapterTemplate = this.cookieService.get('metube_chapter_template') || '';
     this.clipStart = this.cookieService.get('metube_clip_start') || '';
     this.clipEnd = this.cookieService.get('metube_clip_end') || '';
-    this.subtitleLanguage = this.cookieService.get('metube_subtitle_language') || 'en';
+    this.subtitleLanguage = this.cookieService.get('metube_subtitle_language') || 'zh-Hans';
     this.subtitleMode = this.cookieService.get('metube_subtitle_mode') || 'prefer_manual';
     this.ytdlOptionsPresets = this.loadYtdlOptionsPresetsFromCookie();
     this.ytdlOptionsOverrides = this.cookieService.get('metube_ytdl_options_overrides') || '';
@@ -302,7 +304,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }
     this.activeTheme = this.getPreferredTheme(this.cookieService);
 
-    // Subscribe to download updates
     this.downloads.queueChanged.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.updateMetrics();
       this.syncLiveCountdownTimer();
@@ -313,7 +314,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       this.rebuildSortedDone();
       this.cdr.markForCheck();
     });
-    // Subscribe to real-time updates
     this.downloads.updated.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.updateMetrics();
       this.syncLiveCountdownTimer();
@@ -349,7 +349,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       this.updateDoneActionButtons();
       this.cdr.markForCheck();
     });
-    // Initialize action button states for already-loaded entries.
     this.updateDoneActionButtons();
     this.fetchVersionInfo();
     this.socket.fromEvent('connect')
@@ -365,8 +364,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.colorSchemeMediaQuery.removeEventListener('change', this.onColorSchemeChanged);
   }
 
-  // keyvalue comparator that preserves insertion order (Angular's keyvalue
-  // pipe sorts by key by default): https://github.com/angular/angular/issues/31420
   asIsOrder() {
     return 0;
   }
@@ -374,7 +371,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   qualityChanged() {
     this.cookieService.set('metube_quality', this.quality, { expires: this.settingsCookieExpiryDays });
     this.saveSelection(this.downloadType);
-    // Re-trigger custom directory change
     this.downloads.customDirsChanged.next(this.downloads.customDirs);
   }
 
@@ -425,33 +421,28 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
 
   getYtdlOptionsUpdateTime() {
     this.downloads.ytdlOptionsChanged.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       next: (data:any) => {
         if (data['success']){
           const date = new Date(data['update_time'] * 1000);
           this.ytDlpOptionsUpdateTime=date.toLocaleString();
         }else{
-          this.toasts.error("Error reloading yt-dlp options: " + data['msg']);
+          this.toasts.error("重新加载 yt-dlp 参数失败: " + data['msg']);
         }
         this.cdr.markForCheck();
       }
     });
   }
+
   getConfiguration() {
     this.downloads.configurationChanged.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       next: (config: any) => {
         const playlistItemLimit = parseInt(String(config['DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT'] ?? '0'), 10);
         if (!Number.isNaN(playlistItemLimit) && playlistItemLimit > 0) {
           this.playlistItemLimit = playlistItemLimit;
         }
-        // Pre-fill the download folder, unless the user has already typed one
-        // this session. The server drops DEFAULT_FOLDER when CUSTOM_DIRS is
-        // off, so there is nothing to guard against here.
         if (!this.folder) {
           this.folder = String(config['DEFAULT_FOLDER'] ?? '');
         }
-        // Set chapter template from backend config if not already set by cookie
         if (!this.chapterTemplate) {
           this.chapterTemplate = config['OUTPUT_TEMPLATE_CHAPTER'];
         }
@@ -494,7 +485,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
           return parsed.filter((p): p is string => typeof p === 'string' && p.length > 0);
         }
       } catch {
-        // fall through to legacy cookie
       }
     }
     const legacy = this.cookieService.get('metube_ytdl_options_preset')?.trim();
@@ -512,11 +502,11 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     try {
       const parsed = JSON.parse(trimmed);
       if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-        this.toasts.error('Custom yt-dlp options must be a JSON object');
+        this.toasts.error('自定义 yt-dlp 参数必须为 JSON 对象');
         return false;
       }
     } catch {
-      this.toasts.error('Custom yt-dlp options must be valid JSON');
+      this.toasts.error('自定义 yt-dlp 参数必须为合法的 JSON 格式');
       return false;
     }
     return true;
@@ -555,7 +545,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.subscriptionsSvc.refreshList().pipe(takeUntilDestroyed(this.destroyRef)).subscribe((refreshRes) => {
       const error = this.getStatusError(refreshRes);
       if (error) {
-        this.toasts.error(error || 'Refresh subscriptions failed');
+        this.toasts.error(error || '刷新订阅列表失败');
         return;
       }
       this.cdr.markForCheck();
@@ -599,7 +589,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }
     const payload = this.buildAddPayload();
     if (!payload.url?.trim()) {
-      this.toasts.error('Please enter a URL');
+      this.toasts.error('请输入有效链接');
       return;
     }
     const tr = (this.titleRegex || '').trim();
@@ -607,12 +597,12 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       try {
         void RegExp(tr);
       } catch {
-        this.toasts.error('Invalid subscription title filter (regex)');
+        this.toasts.error('订阅标题正则表达式不正确');
         return;
       }
     }
     if (payload.splitByChapters && !payload.chapterTemplate.includes('%(section_number)')) {
-      this.toasts.error('Chapter template must include %(section_number)');
+      this.toasts.error('章节模板必须包含 %(section_number)');
       return;
     }
     if (!this.validateYtdlOptionsOverrides(payload.ytdlOptionsOverrides)) {
@@ -637,7 +627,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
         next: (res) => {
           const r = res as { status?: string; msg?: string };
           if (r.status === 'error') {
-            this.toasts.error(r.msg || 'Subscribe failed');
+            this.toasts.error(r.msg || '添加订阅失败');
           } else {
             this.addUrl = '';
             this.titleRegex = '';
@@ -665,14 +655,14 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       try {
         void RegExp(raw);
       } catch {
-        this.toasts.error('Invalid subscription title filter (regex)');
+        this.toasts.error('订阅标题正则表达式不正确');
         return;
       }
     }
     this.subscriptionsSvc.update(id, { title_regex: raw }).subscribe((res) => {
       const error = this.getStatusError(res);
       if (error) {
-        this.toasts.error(error || 'Update subscription failed');
+        this.toasts.error(error || '更新订阅失败');
         return;
       }
       this.cancelEditTitleRegex();
@@ -694,13 +684,13 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   saveName(id: string) {
     const name = (this.nameEditDraft || '').trim();
     if (!name) {
-      this.toasts.error('Subscription name must not be empty');
+      this.toasts.error('订阅名称不能为空');
       return;
     }
     this.subscriptionsSvc.update(id, { name }).subscribe((res) => {
       const error = this.getStatusError(res);
       if (error) {
-        this.toasts.error(error || 'Update subscription failed');
+        this.toasts.error(error || '更新订阅失败');
         return;
       }
       this.cancelEditName();
@@ -711,7 +701,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.subscriptionsSvc.delete([id]).subscribe((res) => {
       const error = this.getStatusError(res);
       if (error) {
-        this.toasts.error(error || 'Delete subscription failed');
+        this.toasts.error(error || '删除订阅失败');
         return;
       }
       this.selectedSubscriptionIds.delete(id);
@@ -727,7 +717,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.subscriptionsSvc.delete(ids).subscribe((res) => {
       const error = this.getStatusError(res);
       if (error) {
-        this.toasts.error(error || 'Delete subscriptions failed');
+        this.toasts.error(error || '批量删除订阅失败');
         return;
       }
       this.selectedSubscriptionIds.clear();
@@ -753,7 +743,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       .subscribe((res) => {
         const error = this.getStatusError(res);
         if (error) {
-          this.toasts.error(error || 'Subscription check failed');
+          this.toasts.error(error || '检查订阅更新失败');
           return;
         }
         this.refreshSubscriptionsWithAlert();
@@ -800,7 +790,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       .subscribe((res) => {
         const error = this.getStatusError(res);
         if (error) {
-          this.toasts.error(error || 'Subscription check failed');
+          this.toasts.error(error || '批量检查订阅失败');
           return;
         }
         this.refreshSubscriptionsWithAlert();
@@ -823,7 +813,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.subscriptionsSvc.update(row.id, { enabled: !row.enabled }).subscribe((res) => {
       const error = this.getStatusError(res);
       if (error) {
-        this.toasts.error(error || 'Update subscription failed');
+        this.toasts.error(error || '更新订阅状态失败');
       }
     });
   }
@@ -855,7 +845,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.cookieService.set('metube_format', this.format, { expires: this.settingsCookieExpiryDays });
     this.setQualities();
     this.saveSelection(this.downloadType);
-    // Re-trigger custom directory change
     this.downloads.customDirsChanged.next(this.downloads.customDirs);
   }
 
@@ -872,7 +861,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   chapterTemplateChanged() {
-    // Restore default if template is cleared - get from configuration
     if (!this.chapterTemplate || this.chapterTemplate.trim() === '') {
       const configuredTemplate = this.downloads.configuration['OUTPUT_TEMPLATE_CHAPTER'];
       this.chapterTemplate = typeof configuredTemplate === 'string' ? configuredTemplate : '';
@@ -922,16 +910,21 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     if (!q) return '';
     if (/^\d+$/.test(q) && download.download_type === 'audio') return `${q} kbps`;
     if (/^\d+$/.test(q)) return `${q}p`;
+    if (q === 'best') return '最高画质 (Best)';
     return q.charAt(0).toUpperCase() + q.slice(1);
   }
 
   downloadTypeLabel(download: Download): string {
     const type = download.download_type || 'video';
-    return type.charAt(0).toUpperCase() + type.slice(1);
+    const map: Record<string, string> = {
+      video: '视频',
+      audio: '音频',
+      captions: '字幕',
+      thumbnail: '封面图'
+    };
+    return map[type] || (type.charAt(0).toUpperCase() + type.slice(1));
   }
 
-  // The format the download was queued with, labelled the way the form labels
-  // it, so a queued item can be told apart while it is still downloading.
   formatLabel(download: Download): string {
     const format = (download.format || '').trim();
     if (!format) {
@@ -952,7 +945,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       return format || '-';
     }
     const codec = download.codec;
-    if (!codec || codec === 'auto') return 'Auto';
+    if (!codec || codec === 'auto') return '自动 (Auto)';
     return this.videoCodecs.find(c => c.id === codec)?.text ?? codec;
   }
 
@@ -989,13 +982,13 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   setQualities() {
     if (this.downloadType === 'video') {
       this.qualities = this.format === 'ios'
-        ? [{ id: 'best', text: 'Best' }]
+        ? [{ id: 'best', text: '最高画质 (Best)' }]
         : VIDEO_QUALITIES;
     } else if (this.downloadType === 'audio') {
       const selectedFormat = this.audioFormats.find(el => el.id === this.format);
-      this.qualities = selectedFormat ? selectedFormat.qualities : [{ id: 'best', text: 'Best' }];
+      this.qualities = selectedFormat ? selectedFormat.qualities : [{ id: 'best', text: '最高音质 (Best)' }];
     } else {
-      this.qualities = [{ id: 'best', text: 'Best' }];
+      this.qualities = [{ id: 'best', text: '默认 (Best)' }];
     }
     const exists = this.qualities.find(el => el.id === this.quality);
     this.quality = exists ? this.quality : 'best';
@@ -1100,12 +1093,11 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
             codec: String(parsed.codec ?? 'auto'),
             format: String(parsed.format ?? ''),
             quality: String(parsed.quality ?? 'best'),
-            subtitleLanguage: String(parsed.subtitleLanguage ?? 'en'),
+            subtitleLanguage: String(parsed.subtitleLanguage ?? 'zh-Hans'),
             subtitleMode: String(parsed.subtitleMode ?? 'prefer_manual'),
           };
         }
       } catch {
-        // Ignore malformed cookie values.
       }
     }
   }
@@ -1139,9 +1131,8 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   addDownload(overrides: Partial<AddDownloadPayload> = {}) {
     const payload = this.buildAddPayload(overrides);
 
-    // Validate chapter template if chapter splitting is enabled
     if (payload.splitByChapters && !payload.chapterTemplate.includes('%(section_number)')) {
-      this.toasts.error('Chapter template must include %(section_number)');
+      this.toasts.error('章节模板必须包含 %(section_number)');
       return;
     }
     if (!this.validateYtdlOptionsOverrides(payload.ytdlOptionsOverrides)) {
@@ -1153,9 +1144,8 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.addRequestSub?.unsubscribe();
     this.addRequestSub = this.downloads.add(payload).subscribe((status: Status) => {
       if (status.status === 'error' && !this.cancelRequested) {
-        this.toasts.error(`Error adding URL: ${status.msg}`);
+        this.toasts.error(`添加链接失败: ${status.msg}`);
       } else if (status.status !== 'error') {
-        // e.g. "Already in queue: ..." when the backend skipped a duplicate.
         if (status.msg) {
           this.toasts.info(status.msg);
         }
@@ -1174,7 +1164,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       },
       error: (err) => {
         this.cancelRequested = false;
-        console.error('Failed to cancel adding:', err?.message || err);
+        console.error('取消添加失败:', err?.message || err);
       }
     });
   }
@@ -1187,13 +1177,9 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   downloadItemByKey(id: string) {
-    this.downloads.startById([id]).subscribe((res) => this.handleActionResult(res, 'Start download failed'));
+    this.downloads.startById([id]).subscribe((res) => this.handleActionResult(res, '开始下载失败'));
   }
 
-  // 'preparing' (yt-dlp starting up) and 'postprocessing' (ffmpeg merging,
-  // re-encoding or splitting once the bytes have landed) both have real work in
-  // flight with no percentage to report, so the bar runs animated at full width
-  // instead of showing a number that cannot move.
   isIndeterminate(download: Download): boolean {
     return download.status === 'preparing' || download.status === 'postprocessing';
   }
@@ -1219,13 +1205,11 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   retryDownload(key: string, download: Download) {
-    // Only remove the done-list record once the retry is confirmed queued —
-    // deleting it eagerly would silently lose history if the re-add fails.
     this.downloads.retry(key)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((status: Status) => {
         if (status.status === 'error') {
-          this.toasts.error(`Error retrying ${download.title}: ${status.msg}`);
+          this.toasts.error(`重试任务 ${download.title} 失败: ${status.msg}`);
           this.cdr.markForCheck();
           return;
         }
@@ -1234,23 +1218,23 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   delDownload(where: State, id: string) {
-    this.downloads.delById(where, [id]).subscribe((res) => this.handleActionResult(res, 'Delete failed'));
+    this.downloads.delById(where, [id]).subscribe((res) => this.handleActionResult(res, '删除失败'));
   }
 
   startSelectedDownloads(where: State){
-    this.downloads.startByFilter(where, dl => !!dl.checked).subscribe((res) => this.handleActionResult(res, 'Start download failed'));
+    this.downloads.startByFilter(where, dl => !!dl.checked).subscribe((res) => this.handleActionResult(res, '开始下载失败'));
   }
 
   delSelectedDownloads(where: State) {
-    this.downloads.delByFilter(where, dl => !!dl.checked).subscribe((res) => this.handleActionResult(res, 'Delete failed'));
+    this.downloads.delByFilter(where, dl => !!dl.checked).subscribe((res) => this.handleActionResult(res, '删除失败'));
   }
 
   clearCompletedDownloads() {
-    this.downloads.delByFilter('done', dl => dl.status === 'finished').subscribe((res) => this.handleActionResult(res, 'Clear completed failed'));
+    this.downloads.delByFilter('done', dl => dl.status === 'finished').subscribe((res) => this.handleActionResult(res, '清空已完成记录失败'));
   }
 
   clearFailedDownloads() {
-    this.downloads.delByFilter('done', dl => dl.status === 'error').subscribe((res) => this.handleActionResult(res, 'Clear failed downloads failed'));
+    this.downloads.delByFilter('done', dl => dl.status === 'error').subscribe((res) => this.handleActionResult(res, '清空失败记录失败'));
   }
 
   retryFailedDownloads() {
@@ -1261,9 +1245,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     });
   }
 
-  // Chromium-based browsers silently drop programmatic downloads beyond ~10 when
-  // triggered in a tight loop. Trigger in batches with a short pause in between so
-  // large selections download cleanly. See issue #1008.
   private static readonly DOWNLOAD_BATCH_SIZE = 10;
   private static readonly DOWNLOAD_BATCH_DELAY_MS = 1000;
 
@@ -1298,11 +1279,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
 
   buildDownloadLink(download: Download) {
     let baseDir = this.downloads.configuration["PUBLIC_HOST_URL"];
-    // Must match the server's directory rule exactly: ytdl.py writes to
-    // AUDIO_DOWNLOAD_DIR on download_type alone. Treating any .mp3 as audio
-    // sent the link to audio_download/ for mp3s produced under a video-type
-    // download (a postprocessor, a preset, or a legacy record), which the
-    // server had written to DOWNLOAD_DIR -- a 404 whenever the two differ.
     if (download.download_type === 'audio') {
       baseDir = this.downloads.configuration["PUBLIC_HOST_AUDIO_URL"];
     }
@@ -1314,47 +1290,31 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     return baseDir + encodeURIComponent(download.filename);
   }
 
-  // Web Share API support — primarily for iOS Safari / Chrome, lets the user
-  // hand the downloaded file off to the platform share sheet (Photos.app,
-  // Files, third-party apps, AirDrop). Falls back silently to the standard
-  // download flow on platforms without navigator.share / canShare.
   canShareDownloads(): boolean {
-    // navigator.share alone is not enough — Desktop Safari implements
-    // navigator.share but not canShare with files. We explicitly require
-    // both, since we always intend to share a file (not a URL).
     return typeof navigator !== 'undefined'
       && typeof navigator.share === 'function'
       && typeof navigator.canShare === 'function';
   }
 
-  // Conservative warning threshold for the share sheet — iOS' actual
-  // refusal limit varies between ~50 MB (older versions) and ~150 MB
-  // (recent ones). 80 MB warns the user before the time-wasting fetch+
-  // copy of a too-large file that the platform will then reject.
   private static readonly SHARE_SIZE_WARN_BYTES = 80 * 1024 * 1024;
 
   async shareDownload(download: Download): Promise<void> {
     if (!this.canShareDownloads()) {
       return;
     }
-    // Pre-flight size check: warn the user about the iOS share-sheet
-    // soft-fail on large files, before we spend time fetching the whole
-    // file into memory only to have navigator.canShare reject it.
     if (download.size && download.size > App.SHARE_SIZE_WARN_BYTES) {
       const sizeMb = Math.round(download.size / 1024 / 1024);
       const proceed = await this.toasts.confirm(
-        `This file is ${sizeMb} MB. iOS' share sheet often refuses files ` +
-        `larger than ~100 MB and the share will silently fail. ` +
-        `Try anyway? (Use the download button instead if it fails.)`,
-        'Try anyway',
-        'Cancel',
+        `该文件大小为 ${sizeMb} MB。iOS 分享面板通常限制 100MB 以上的文件。是否仍要尝试？`,
+        '继续尝试',
+        '取消',
       );
       if (!proceed) return;
     }
     try {
       const response = await fetch(this.buildDownloadLink(download));
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status} fetching file for share`);
+        throw new Error(`获取分享文件失败 HTTP ${response.status}`);
       }
       const blob = await response.blob();
       const file = new File([blob], download.filename, {
@@ -1362,28 +1322,19 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       });
       const payload: ShareData = { files: [file], title: download.title };
       if (!navigator.canShare(payload)) {
-        // The platform refused the payload — most commonly because the
-        // file is too large for the iOS share sheet, or the MIME type
-        // isn't accepted. Tell the user so they can fall back to the
-        // download button right next to this one instead of staring at
-        // a button that quietly did nothing.
-        console.warn('navigator.canShare rejected payload for', download.filename);
+        console.warn('设备不支持直接分享此文件:', download.filename);
         this.toasts.error(
-          `Your device's share sheet doesn't accept this file ` +
-          `(most likely because it's too large). ` +
-          `Please use the download button instead.`
+          `您的设备无法直接分享此文件 (可能由于文件过大)。请直接点击下载按钮保存。`
         );
         return;
       }
       await navigator.share(payload);
     } catch (err) {
       const e = err as { name?: string; message?: string };
-      // AbortError = user dismissed the share sheet → silent no-op.
       if (e.name === 'AbortError') return;
-      console.error('Share failed:', err);
+      console.error('分享失败:', err);
       this.toasts.error(
-        `Share failed: ${e.message || 'unknown error'}. ` +
-        `Please use the download button instead.`
+        `分享失败: ${e.message || '未知错误'}。请直接点击下载按钮保存。`
       );
     }
   }
@@ -1401,7 +1352,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
 
   buildChapterDownloadLink(download: Download, chapterFilename: string) {
     let baseDir = this.downloads.configuration["PUBLIC_HOST_URL"];
-    // Same server-side rule as buildDownloadLink above.
     if (download.download_type === 'audio') {
       baseDir = this.downloads.configuration["PUBLIC_HOST_AUDIO_URL"];
     }
@@ -1422,7 +1372,6 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   getChapterFileName(filepath: string) {
-    // Extract just the filename from the path
     const parts = filepath.split('/');
     return parts[parts.length - 1];
   }
@@ -1438,12 +1387,10 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }
   }
 
-  // Toggle inline batch panel (if you want to use an inline panel for export; not used for import modal)
   toggleBatchPanel(): void {
     this.showBatchPanel = !this.showBatchPanel;
   }
 
-  // Open the Batch Import modal
   openBatchImportModal(): void {
     this.lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.batchImportModalOpen = true;
@@ -1461,20 +1408,18 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }, 0);
   }
 
-  // Close the Batch Import modal
   closeBatchImportModal(): void {
     this.batchImportModalOpen = false;
     this.lastFocusedElement?.focus();
   }
 
-  // Start importing URLs from the batch modal textarea
   startBatchImport(): void {
     const urls = this.batchImportText
       .split(/\r?\n/)
       .map(url => url.trim())
       .filter(url => url.length > 0);
     if (urls.length === 0) {
-      this.toasts.error('No valid URLs found.');
+      this.toasts.error('未找到有效链接。');
       return;
     }
     this.importInProgress = true;
@@ -1486,14 +1431,10 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     from(urls).pipe(
       mergeMap(
         url => this.downloads.add(this.buildAddPayload({ url })).pipe(
-          // downloads.add() already catches HTTP errors and emits a single
-          // Status value, so `tap` (not `finalize`) is the right place to
-          // count. This avoids incrementing the counter when an in-flight
-          // request is aborted by cancellation.
           tap((status: Status) => {
             if (status.status === 'error') {
               this.batchImportFailures++;
-              console.error(`Error adding URL ${url}: ${status.msg}`);
+              console.error(`添加链接失败 ${url}: ${status.msg}`);
             }
             this.batchImportCount++;
             this.updateBatchImportStatus();
@@ -1517,39 +1458,34 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     if (done) {
       const processed = this.batchImportCount;
       if (processed < this.batchImportTotal) {
-        parts.push(`Import cancelled after ${processed} of ${this.batchImportTotal} URLs.`);
+        parts.push(`已取消导入，共处理 ${processed} / ${this.batchImportTotal} 条链接。`);
       } else {
-        parts.push(`Finished importing ${this.batchImportTotal} URLs.`);
+        parts.push(`成功导入 ${this.batchImportTotal} 条链接。`);
       }
     } else {
-      parts.push(`Importing ${this.batchImportCount} of ${this.batchImportTotal} URLs...`);
+      parts.push(`正在导入 ${this.batchImportCount} / ${this.batchImportTotal} 条链接...`);
     }
     if (this.batchImportFailures > 0) {
-      parts.push(`${this.batchImportFailures} failed.`);
+      parts.push(`(其中 ${this.batchImportFailures} 条失败)`);
     }
     this.batchImportStatus = parts.join(' ');
   }
 
-  // Cancel the batch import process: aborts in-flight and pending requests
-  // immediately via the cancellation Subject wired into the pipeline.
   cancelBatchImport(): void {
     if (this.importInProgress) {
       this.batchImportCancel$.next();
     }
   }
 
-  // Export URLs based on filter: 'pending', 'completed', 'failed', or 'all'
   exportBatchUrls(filter: BatchUrlFilter): void {
     this.batchUrls.export(filter);
   }
 
-  // Copy URLs to clipboard based on filter: 'pending', 'completed', 'failed', or 'all'
   copyBatchUrls(filter: BatchUrlFilter): void {
     this.batchUrls.copy(filter);
   }
 
   fetchVersionInfo(): void {
-    // eslint-disable-next-line no-useless-escape
     const baseUrl = `${window.location.origin}${window.location.pathname.replace(/\/[^\/]*$/, '/')}`;
     const versionUrl = `${baseUrl}version`;
     this.http.get<{ 'yt-dlp': string, version: string }>(versionUrl)
@@ -1609,10 +1545,10 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
 
   copyErrorMessage(id: string, download: Download) {
     const parts: string[] = [];
-    if (download.title) parts.push(`Title: ${download.title}`);
-    if (download.url) parts.push(`URL: ${download.url}`);
-    if (download.msg) parts.push(`Message: ${download.msg}`);
-    if (download.error) parts.push(`Error: ${download.error}`);
+    if (download.title) parts.push(`视频名称: ${download.title}`);
+    if (download.url) parts.push(`链接: ${download.url}`);
+    if (download.msg) parts.push(`提示信息: ${download.msg}`);
+    if (download.error) parts.push(`错误详情: ${download.error}`);
     const text = parts.join('\n');
     if (!text.trim()) return;
     const done = () => {
@@ -1620,8 +1556,8 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       setTimeout(() => { this.lastCopiedErrorId = null; }, 1500);
     };
     const fail = (err?: unknown) => {
-      console.error('Clipboard write failed:', err);
-      this.toasts.error('Failed to copy to clipboard. Your browser may require HTTPS for clipboard access.');
+      console.error('写入剪贴板失败:', err);
+      this.toasts.error('复制到剪贴板失败。');
     };
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(fail);
@@ -1657,7 +1593,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
           this.hasCookies = true;
         } else {
           this.refreshCookieStatus();
-          this.toasts.error(`Error uploading cookies: ${this.formatErrorMessage(response?.msg)}`);
+          this.toasts.error(`上传 Cookies 失败: ${this.formatErrorMessage(response?.msg)}`);
         }
         this.cookieUploadInProgress = false;
         input.value = '';
@@ -1666,7 +1602,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
         this.refreshCookieStatus();
         this.cookieUploadInProgress = false;
         input.value = '';
-        this.toasts.error('Error uploading cookies.');
+        this.toasts.error('上传 Cookies 失败。');
       }
     });
   }
@@ -1686,10 +1622,10 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       try {
         return JSON.stringify(error);
       } catch {
-        return 'Unknown error';
+        return '未知错误';
       }
     }
-    return 'Unknown error';
+    return '未知错误';
   }
 
   deleteCookies() {
@@ -1700,11 +1636,11 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
           return;
         }
         this.refreshCookieStatus();
-        this.toasts.error(`Error deleting cookies: ${this.formatErrorMessage(response?.msg)}`);
+        this.toasts.error(`删除 Cookies 失败: ${this.formatErrorMessage(response?.msg)}`);
       },
       error: () => {
         this.refreshCookieStatus();
-        this.toasts.error('Error deleting cookies.');
+        this.toasts.error('删除 Cookies 失败。');
       }
     });
   }

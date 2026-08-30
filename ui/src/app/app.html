@@ -1,32 +1,32 @@
 <nav class="navbar navbar-expand-md navbar-dark">
   <div class="container-fluid">
     <a class="navbar-brand d-flex align-items-center" href="#">
-      <img src="assets/icons/android-chrome-192x192.png" alt="MeTube Logo" height="32" class="me-2">
-      MeTube
+      <img src="assets/icons/android-chrome-192x192.png" alt="twtube Logo" height="32" class="me-2">
+      twtube 中文版
     </a>
     <div class="download-metrics">
       @if (activeDownloads > 0) {
         <div class="metric">
           <fa-icon [icon]="faDownload" class="text-primary" />
-          <span>{{activeDownloads}} downloading</span>
+          <span>{{activeDownloads}} 正在下载</span>
         </div>
       }
       @if (queuedDownloads > 0) {
         <div class="metric">
           <fa-icon [icon]="faClock" class="text-warning" />
-          <span>{{queuedDownloads}} queued</span>
+          <span>{{queuedDownloads}} 等待中</span>
         </div>
       }
       @if (completedDownloads > 0) {
         <div class="metric">
           <fa-icon [icon]="faCheck" class="text-success" />
-          <span>{{completedDownloads}} completed</span>
+          <span>{{completedDownloads}} 已完成</span>
         </div>
       }
       @if (failedDownloads > 0) {
         <div class="metric">
           <fa-icon [icon]="faTimesCircle" class="text-danger" />
-          <span>{{failedDownloads}} failed</span>
+          <span>{{failedDownloads}} 失败</span>
         </div>
       }
       @if ((totalSpeed | speed) !== '') {
@@ -36,18 +36,7 @@
         </div>
       }
     </div>
-    <!--
-    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarsDefault" aria-controls="navbarsDefault" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarsDefault">
-      <ul class="navbar-nav mr-auto">
-        <li class="nav-item active">
-          <a class="nav-link" href="#">Home <span class="sr-only">(current)</span></a>
-        </li>
-      </ul>
-    </div>
-    -->
+
     <div class="navbar-nav ms-auto">
       <div class="nav-item dropdown" ngbDropdown placement="bottom-end">
         <button class="btn btn-link nav-link py-2 px-0 px-sm-2 dropdown-toggle d-flex align-items-center"
@@ -86,71 +75,71 @@
 <main role="main" class="container container-xl">
   <form #f="ngForm">
     <div class="container add-url-box">
-      <!-- Main URL Input with Download Button -->
+      <!-- 主链接输入框与下载按钮 -->
       <div class="row mb-4">
         <div class="col">
           <ng-template #urlBarActions>
             @if (addInProgress && cancelRequested) {
               <button class="btn btn-warning btn-lg px-3" type="button" disabled>
                 <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                Canceling...
+                正在取消...
               </button>
             } @else if (addInProgress) {
               <button class="btn btn-secondary btn-lg px-3 add-progress-btn" type="button" disabled>
                 <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                Adding...
+                正在添加...
               </button>
               <button class="btn btn-outline-danger btn-lg px-3 add-cancel-btn"
                 type="button"
                 (click)="cancelAdding()"
-                aria-label="Cancel adding URL"
-                title="Cancel adding URL">
-                <fa-icon [icon]="faTimesCircle" class="me-1" /> Cancel
+                aria-label="取消添加链接"
+                title="取消添加链接">
+                <fa-icon [icon]="faTimesCircle" class="me-1" /> 取消
               </button>
             } @else if (subscribeInProgress) {
               <button class="btn btn-primary btn-lg px-4" type="button" disabled>
-                Download
+                立即下载
               </button>
               <button class="btn btn-outline-secondary btn-lg px-3" type="button" disabled>
                 <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                Subscribing...
+                正在订阅...
               </button>
             } @else {
               <button class="btn btn-primary btn-lg px-4" type="submit"
                 (click)="addDownload()"
                 [disabled]="downloads.loading">
-                Download
+                立即下载
               </button>
               <button class="btn btn-outline-secondary btn-lg px-3" type="button"
                 (click)="addSubscription()"
                 [disabled]="downloads.loading">
-                Subscribe
+                添加订阅
               </button>
             }
           </ng-template>
 
-          <!-- Narrow viewports: full-width field, then Bootstrap btn-group (no faux input-group strip) -->
+          <!-- 窄屏视图 -->
           <div class="vstack gap-2 d-md-none">
             <input type="text"
               autocomplete="off"
               spellcheck="false"
               class="form-control form-control-lg"
-              placeholder="Enter video, channel, or playlist URL"
+              placeholder="输入视频、频道或播放列表链接 (支持 YouTube / 抖音 / TikTok / IG)"
               [(ngModel)]="addUrl"
               [ngModelOptions]="{standalone: true}"
               [disabled]="addInProgress || subscribeInProgress || downloads.loading">
-            <div class="btn-group w-100" role="group" aria-label="Download or subscribe">
+            <div class="btn-group w-100" role="group" aria-label="下载或订阅">
               <ng-container [ngTemplateOutlet]="urlBarActions" />
             </div>
           </div>
 
-          <!-- md and up: standard input-group so Bootstrap handles fused borders -->
+          <!-- 标准屏幕视图 -->
           <div class="input-group input-group-lg shadow-sm d-none d-md-flex">
             <input type="text"
               autocomplete="off"
               spellcheck="false"
               class="form-control form-control-lg"
-              placeholder="Enter video, channel, or playlist URL"
+              placeholder="输入视频、频道或播放列表链接 (支持 YouTube / 抖音 / TikTok / IG)"
               [(ngModel)]="addUrl"
               [ngModelOptions]="{standalone: true}"
               [disabled]="addInProgress || subscribeInProgress || downloads.loading">
@@ -159,12 +148,12 @@
         </div>
       </div>
 
-      <!-- Options Row -->
+      <!-- 选项行 -->
       <div class="row mb-3 g-3">
         @if (downloadType === 'video') {
           <div class="col-md-3">
             <div class="input-group">
-              <span class="input-group-text">Type</span>
+              <span class="input-group-text">下载类型</span>
               <select class="form-select"
                 name="downloadType"
                 [(ngModel)]="downloadType"
@@ -178,7 +167,7 @@
           </div>
           <div class="col-md-3">
             <div class="input-group">
-              <span class="input-group-text">Codec</span>
+              <span class="input-group-text">编码格式</span>
               <select class="form-select"
                 name="codec"
                 [(ngModel)]="codec"
@@ -192,7 +181,7 @@
           </div>
           <div class="col-md-3">
             <div class="input-group">
-              <span class="input-group-text">Format</span>
+              <span class="input-group-text">封装格式</span>
               <select class="form-select"
                 name="format"
                 [(ngModel)]="format"
@@ -206,7 +195,7 @@
           </div>
           <div class="col-md-3">
             <div class="input-group">
-              <span class="input-group-text">Quality</span>
+              <span class="input-group-text">视频画质</span>
               <select class="form-select"
                 name="quality"
                 [(ngModel)]="quality"
@@ -221,7 +210,7 @@
         } @else if (downloadType === 'audio') {
           <div class="col-md-4">
             <div class="input-group">
-              <span class="input-group-text">Type</span>
+              <span class="input-group-text">下载类型</span>
               <select class="form-select"
                 name="downloadType"
                 [(ngModel)]="downloadType"
@@ -235,7 +224,7 @@
           </div>
           <div class="col-md-4">
             <div class="input-group">
-              <span class="input-group-text">Format</span>
+              <span class="input-group-text">音频格式</span>
               <select class="form-select"
                 name="format"
                 [(ngModel)]="format"
@@ -249,7 +238,7 @@
           </div>
           <div class="col-md-4">
             <div class="input-group">
-              <span class="input-group-text">Quality</span>
+              <span class="input-group-text">音质码率</span>
               <select class="form-select"
                 name="quality"
                 [(ngModel)]="quality"
@@ -262,10 +251,9 @@
             </div>
           </div>
         } @else if (downloadType === 'captions') {
-          <!-- 4× col-md-3 is too tight at ~768px (long addons wrap the 4th field); 2×2 md–lg, one row lg+ -->
           <div class="col-12 col-md-6 col-lg-3">
             <div class="input-group">
-              <span class="input-group-text">Type</span>
+              <span class="input-group-text">下载类型</span>
               <select class="form-select"
                 name="downloadType"
                 [(ngModel)]="downloadType"
@@ -279,7 +267,7 @@
           </div>
           <div class="col-12 col-md-6 col-lg-3">
             <div class="input-group">
-              <span class="input-group-text help-title" ngbPopover="Subtitle output format for captions mode." triggers="click" autoClose="outside" container="body">Format</span>
+              <span class="input-group-text help-title" ngbPopover="字幕输出格式" triggers="click" autoClose="outside" container="body">字幕格式</span>
               <select class="form-select"
                 name="format"
                 [(ngModel)]="format"
@@ -293,7 +281,7 @@
           </div>
           <div class="col-12 col-md-6 col-lg-3">
             <div class="input-group">
-              <span class="input-group-text help-title" ngbPopover="Subtitle language (you can type any language code)." triggers="click" autoClose="outside" container="body">Language</span>
+              <span class="input-group-text help-title" ngbPopover="字幕语言代码 (可输入任意语言代码，如 zh-Hans, en)" triggers="click" autoClose="outside" container="body">字幕语言</span>
               <input class="form-control"
                 type="text"
                 list="subtitleLanguageOptions"
@@ -301,7 +289,7 @@
                 [(ngModel)]="subtitleLanguage"
                 (change)="subtitleLanguageChanged()"
                 [disabled]="addInProgress || subscribeInProgress || downloads.loading"
-                placeholder="e.g. en, es, zh-Hans">
+                placeholder="例如 zh-Hans, en">
               <datalist id="subtitleLanguageOptions">
                 @for (lang of subtitleLanguages; track lang.id) {
                   <option [value]="lang.id">{{ lang.text }}</option>
@@ -311,7 +299,7 @@
           </div>
           <div class="col-12 col-md-6 col-lg-3">
             <div class="input-group">
-              <span class="input-group-text help-title" ngbPopover="Choose manual, auto, or fallback preference for captions mode." triggers="click" autoClose="outside" container="body">Subtitle Source</span>
+              <span class="input-group-text help-title" ngbPopover="选择手动上传字幕、自动生成字幕或优先匹配规则" triggers="click" autoClose="outside" container="body">字幕来源</span>
               <select class="form-select"
                 name="subtitleMode"
                 [(ngModel)]="subtitleMode"
@@ -326,7 +314,7 @@
         } @else {
           <div class="col-md-6">
             <div class="input-group">
-              <span class="input-group-text">Type</span>
+              <span class="input-group-text">下载类型</span>
               <select class="form-select"
                 name="downloadType"
                 [(ngModel)]="downloadType"
@@ -340,8 +328,8 @@
           </div>
           <div class="col-md-6">
             <div class="input-group">
-              <span class="input-group-text">Format</span>
-              <input class="form-control" value="JPG" disabled>
+              <span class="input-group-text">格式</span>
+              <input class="form-control" value="JPG 封面图" disabled>
             </div>
           </div>
         }
@@ -354,7 +342,7 @@
             (click)="toggleAdvanced()"
             [attr.aria-expanded]="isAdvancedOpen"
             aria-controls="advancedOptions">
-            Advanced Options
+            高级选项
             <fa-icon
               [icon]="isAdvancedOpen ? faChevronDown : faChevronRight"
               class="ms-1" />
@@ -362,20 +350,20 @@
         </div>
       </div>
 
-      <!-- Advanced Options Panel -->
+      <!-- 高级选项面板 -->
       <div class="row">
         <div class="col-12">
           <div class="collapse show" id="advancedOptions" [ngbCollapse]="!isAdvancedOpen">
             <div class="pt-1 pb-2">
-              <!-- Output -->
-              <div class="settings-section-label">Output</div>
+              <!-- 输出设置 -->
+              <div class="settings-section-label">输出设置 (Output)</div>
               <div class="row g-3">
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Type to filter existing folders, or enter a new folder name." triggers="click" autoClose="outside" container="body">Download Folder</span>
+                    <span class="input-group-text help-title" ngbPopover="输入或选择已存在的文件夹，或输入新文件夹名称" triggers="click" autoClose="outside" container="body">保存子目录</span>
                     <input type="text"
                       class="form-control"
-                      placeholder="Default"
+                      placeholder="默认 (Default)"
                       name="folder"
                       [(ngModel)]="folder"
                       [ngbTypeahead]="searchFolder"
@@ -388,10 +376,10 @@
                 </div>
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Add a prefix to downloaded filenames." triggers="click" autoClose="outside" container="body">Custom Name Prefix</span>
+                    <span class="input-group-text help-title" ngbPopover="为下载的文件名添加统一前缀" triggers="click" autoClose="outside" container="body">文件名前缀</span>
                     <input type="text"
                       class="form-control"
-                      placeholder="Default"
+                      placeholder="默认 (留空)"
                       name="customNamePrefix"
                       [(ngModel)]="customNamePrefix"
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading">
@@ -405,8 +393,8 @@
                           name="sponsorblock" [(ngModel)]="sponsorblock" (change)="sponsorblockChanged()"
                           [disabled]="addInProgress || subscribeInProgress || downloads.loading">
                         <label class="form-check-label" for="checkbox-sponsorblock"
-                          ngbPopover="Cut out sponsor segments using SponsorBlock's crowd-sourced markers (YouTube only)."
-                          triggers="hover" container="body">Remove sponsor segments</label>
+                          ngbPopover="使用 SponsorBlock 数据库自动跳过/去除赞助商广告片段 (仅限 YouTube)。"
+                          triggers="hover" container="body">自动去除赞助片段 (SponsorBlock)</label>
                       </div>
                     </div>
                     <div class="col-auto">
@@ -414,13 +402,13 @@
                         <input class="form-check-input" type="checkbox" role="switch" id="checkbox-split-chapters"
                           name="splitByChapters" [(ngModel)]="splitByChapters" (change)="splitByChaptersChanged()"
                           [disabled]="addInProgress || subscribeInProgress || downloads.loading">
-                        <label class="form-check-label" for="checkbox-split-chapters">Split by chapters</label>
+                        <label class="form-check-label" for="checkbox-split-chapters">按章节分段下载</label>
                       </div>
                     </div>
                     @if (splitByChapters) {
                     <div class="col">
                       <div class="input-group">
-                        <span class="input-group-text help-title" ngbPopover="Output template for chapter files." triggers="click" autoClose="outside" container="body">Template</span>
+                        <span class="input-group-text help-title" ngbPopover="分章节文件的输出命名模板" triggers="click" autoClose="outside" container="body">章节模板</span>
                         <input type="text" class="form-control" name="chapterTemplate" [(ngModel)]="chapterTemplate"
                           (change)="chapterTemplateChanged()" [disabled]="addInProgress || subscribeInProgress || downloads.loading">
                       </div>
@@ -431,54 +419,54 @@
                 @if (downloadType === 'video' || downloadType === 'audio') {
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Optional start time (seconds, M:SS, or H:MM:SS). Blank = from start or YouTube &t= in URL." triggers="click" autoClose="outside" container="body">Clip start</span>
+                    <span class="input-group-text help-title" ngbPopover="可选开始时间 (秒, 分:秒, 或 时:分:秒)。留空表示从头开始。" triggers="click" autoClose="outside" container="body">片段开始时间</span>
                     <input type="text"
                       class="form-control"
                       name="clipStart"
                       [(ngModel)]="clipStart"
                       (change)="clipStartChanged()"
-                      placeholder="e.g. 2:26"
+                      placeholder="例如 2:26"
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading">
                   </div>
                 </div>
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Optional end time. Blank = until end of media." triggers="click" autoClose="outside" container="body">Clip end</span>
+                    <span class="input-group-text help-title" ngbPopover="可选结束时间。留空表示直到视频结尾。" triggers="click" autoClose="outside" container="body">片段结束时间</span>
                     <input type="text"
                       class="form-control"
                       name="clipEnd"
                       [(ngModel)]="clipEnd"
                       (change)="clipEndChanged()"
-                      placeholder="e.g. 3:24"
+                      placeholder="例如 3:24"
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading">
                   </div>
                 </div>
                 }
               </div>
 
-              <!-- Behavior -->
-              <div class="settings-section-label">Behavior</div>
+              <!-- 行为控制 -->
+              <div class="settings-section-label">行为控制 (Behavior)</div>
               <div class="row g-3">
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Automatically start downloads when added." triggers="click" autoClose="outside" container="body">Auto Start</span>
+                    <span class="input-group-text help-title" ngbPopover="添加链接后是否立即开始下载" triggers="click" autoClose="outside" container="body">自动开始下载</span>
                     <select class="form-select"
                       name="autoStart"
                       [(ngModel)]="autoStart"
                       (change)="autoStartChanged()"
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading">
-                      <option [ngValue]="true">Yes</option>
-                      <option [ngValue]="false">No</option>
+                      <option [ngValue]="true">是 (立即下载)</option>
+                      <option [ngValue]="false">否 (仅加入队列)</option>
                     </select>
                   </div>
                 </div>
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Maximum number of items to download from a playlist or channel (0 = no limit)." triggers="click" autoClose="outside" container="body">Items Limit</span>
+                    <span class="input-group-text help-title" ngbPopover="限制从播放列表或频道下载的最大视频数 (0 = 无限制)" triggers="click" autoClose="outside" container="body">列表数量限制</span>
                     <input type="number"
                       min="0"
                       class="form-control"
-                      placeholder="Default"
+                      placeholder="默认 (0 为无限制)"
                       name="playlistItemLimit"
                       (keydown)="isNumber($event)"
                       [(ngModel)]="playlistItemLimit"
@@ -487,7 +475,7 @@
                 </div>
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="How often to poll subscriptions for new videos." triggers="click" autoClose="outside" container="body">Subscription Check (min)</span>
+                    <span class="input-group-text help-title" ngbPopover="自动检查订阅频道更新的间隔时间 (分钟)" triggers="click" autoClose="outside" container="body">订阅检查间隔 (分钟)</span>
                     <input type="number"
                       min="1"
                       class="form-control"
@@ -500,13 +488,13 @@
                 </div>
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="In subscriptions, only titles matching this Python-style regex are queued. Empty = all. Case-sensitive; use (?i) in the pattern for case-insensitive." triggers="click" autoClose="outside" container="body">Subscription Title Filter</span>
+                    <span class="input-group-text help-title" ngbPopover="仅下载标题匹配此正则规则的订阅视频。留空表示下载全部。" triggers="click" autoClose="outside" container="body">订阅标题正则过滤</span>
                     <input type="text"
                       class="form-control"
                       name="titleRegex"
                       [(ngModel)]="titleRegex"
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading"
-                      placeholder="Optional regex">
+                      placeholder="可选正则匹配表达式">
                   </div>
                 </div>
                 <div class="col-12">
@@ -516,29 +504,29 @@
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading" />
                     <label class="form-check-label" for="checkbox-skip-subscriber-only">
                       <span class="help-title" tabindex="0" role="button"
-                        ngbPopover="When enabled, subscription checks skip videos marked members-only by yt-dlp (channel Join). Ignored for one-off downloads."
+                        ngbPopover="开启后，订阅检查将自动跳过会员专享视频。"
                         triggers="click" autoClose="outside" container="body"
                         (click)="$event.preventDefault(); $event.stopPropagation()"
                         (keydown.enter)="$event.preventDefault(); $event.stopPropagation()"
-                        (keydown.space)="$event.preventDefault(); $event.stopPropagation()">Skip members-only subscription videos</span>
+                        (keydown.space)="$event.preventDefault(); $event.stopPropagation()">跳过频道会员专享视频</span>
                     </label>
                   </div>
                 </div>
               </div>
 
-              <!-- yt-dlp -->
-              <div class="settings-section-label">yt-dlp</div>
+              <!-- yt-dlp 引擎 -->
+              <div class="settings-section-label">yt-dlp 引擎设置</div>
               <div class="row g-3">
                 <div class="col-12" [class.col-md-6]="allowYtdlOptionsOverrides()">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Choose one or more yt-dlp option presets configured on the server (applied in order)." triggers="click" autoClose="outside" container="body">Option Presets</span>
+                    <span class="input-group-text help-title" ngbPopover="选择服务端预设的 yt-dlp 参数方案" triggers="click" autoClose="outside" container="body">预设参数方案</span>
                     <ng-select
                       class="flex-grow-1"
                       name="ytdlOptionsPresets"
                       [items]="ytdlOptionPresetNames"
                       [multiple]="true"
                       [closeOnSelect]="false"
-                      placeholder="Default"
+                      placeholder="默认预设"
                       [(ngModel)]="ytdlOptionsPresets"
                       (ngModelChange)="ytdlOptionsPresetsChanged()"
                       [disabled]="addInProgress || subscribeInProgress || downloads.loading" />
@@ -547,10 +535,10 @@
                 @if (allowYtdlOptionsOverrides()) {
                 <div class="col-md-6">
                   <div class="input-group">
-                    <span class="input-group-text help-title" ngbPopover="Optional per-download yt-dlp overrides as a JSON object." triggers="click" autoClose="outside" container="body">Custom yt-dlp Options</span>
+                    <span class="input-group-text help-title" ngbPopover="自定义覆盖 yt-dlp 参数 (JSON 格式)" triggers="click" autoClose="outside" container="body">自定义 yt-dlp 参数</span>
                     <input type="text"
                       class="form-control"
-                      placeholder='e.g. {"writesubtitles": true}'
+                      placeholder='例如 {"writesubtitles": true}'
                       name="ytdlOptionsOverrides"
                       [(ngModel)]="ytdlOptionsOverrides"
                       (change)="ytdlOptionsOverridesChanged()"
@@ -560,11 +548,11 @@
                 }
               </div>
 
-              <!-- Tools -->
-              <div class="settings-section-label">Tools</div>
+              <!-- 工具与凭证 -->
+              <div class="settings-section-label">工具与凭证 (Tools)</div>
               <div class="row g-3">
                 <div class="col-md-4">
-                  <div class="action-group-label help-title" ngbPopover="Upload a cookies.txt file from your browser to authenticate restricted or private downloads." triggers="click" autoClose="outside" container="body">Cookies</div>
+                  <div class="action-group-label help-title" ngbPopover="上传浏览器的 cookies.txt 文件以获取高清或会员权限。" triggers="click" autoClose="outside" container="body">Cookies 凭证</div>
                   <input type="file" id="cookie-upload" class="d-none" accept=".txt"
                     (change)="onCookieFileSelect($event)"
                     [disabled]="cookieUploadInProgress || addInProgress">
@@ -578,13 +566,13 @@
                       } @else {
                         <fa-icon [icon]="faUpload" class="me-2" />
                       }
-                      {{ hasCookies ? 'Replace Cookies' : 'Upload Cookies' }}
+                      {{ hasCookies ? '更新 Cookies' : '上传 Cookies' }}
                     </label>
                     @if (hasCookies) {
                       <button type="button" class="btn btn-outline-danger"
                         (click)="deleteCookies()"
                         [disabled]="cookieUploadInProgress || addInProgress"
-                        ngbTooltip="Remove uploaded cookies">
+                        ngbTooltip="删除已上传的 Cookies">
                         <fa-icon [icon]="faTrashAlt" />
                       </button>
                     }
@@ -592,21 +580,21 @@
                   <div class="cookie-status" [class.active]="hasCookies">
                     @if (hasCookies) {
                       <fa-icon [icon]="faCheckCircle" class="me-1" />
-                      Cookies active
+                      Cookies 已生效
                     } @else {
-                      No cookies configured
+                      未配置 Cookies
                     }
                   </div>
                 </div>
                 <div class="col-md-8">
-                  <div class="action-group-label">Bulk Actions</div>
+                  <div class="action-group-label">批量操作</div>
                   <div class="row g-2">
                     <div class="col-4">
                       <button type="button"
                         class="btn btn-secondary w-100"
                         (click)="openBatchImportModal()">
                         <fa-icon [icon]="faFileImport" class="me-2" />
-                        Import URLs
+                        批量导入
                       </button>
                     </div>
                     <div class="col-4">
@@ -614,7 +602,7 @@
                         class="btn btn-secondary w-100"
                         (click)="exportBatchUrls('all')">
                         <fa-icon [icon]="faFileExport" class="me-2" />
-                        Export URLs
+                        批量导出
                       </button>
                     </div>
                     <div class="col-4">
@@ -622,7 +610,7 @@
                         class="btn btn-secondary w-100"
                         (click)="copyBatchUrls('all')">
                         <fa-icon [icon]="faCopy" class="me-2" />
-                        Copy URLs
+                        复制链接
                       </button>
                     </div>
                   </div>
@@ -635,7 +623,7 @@
     </div>
   </form>
 
-  <!-- Batch Import Modal -->
+  <!-- 批量导入弹窗 -->
   <div class="modal fade" tabindex="-1" role="dialog"
   aria-modal="true"
   aria-labelledby="batch-import-modal-title"
@@ -644,12 +632,12 @@
     <div class="modal-dialog" role="document">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 id="batch-import-modal-title" class="modal-title">Batch Import URLs</h5>
-          <button type="button" class="btn-close" aria-label="Close" (click)="closeBatchImportModal()"></button>
+          <h5 id="batch-import-modal-title" class="modal-title">批量导入链接</h5>
+          <button type="button" class="btn-close" aria-label="关闭" (click)="closeBatchImportModal()"></button>
         </div>
         <div class="modal-body">
           <textarea id="batch-import-textarea" [(ngModel)]="batchImportText" class="form-control" rows="6"
-          placeholder="Paste one video URL per line"></textarea>
+          placeholder="每行粘贴一个视频链接"></textarea>
           <div class="mt-2">
             @if (batchImportStatus) {
               <small>{{ batchImportStatus }}</small>
@@ -672,34 +660,35 @@
         <div class="modal-footer">
           @if (importInProgress) {
             <button type="button" class="btn btn-danger me-auto" (click)="cancelBatchImport()">
-              Cancel Import
+              取消导入
             </button>
           }
-          <button type="button" class="btn btn-secondary" (click)="closeBatchImportModal()">Close</button>
+          <button type="button" class="btn btn-secondary" (click)="closeBatchImportModal()">关闭</button>
           <button type="button" class="btn btn-primary" (click)="startBatchImport()" [disabled]="importInProgress">
-            Import URLs
+            开始导入
           </button>
         </div>
       </div>
     </div>
   </div>
 
-
   @if (downloads.loading) {
     <div class="alert alert-info" role="alert">
-      Connecting to server...
+      正在连接到下载服务...
     </div>
   }
+
+  <!-- 正在下载列表 -->
   <div class="metube-section-header">
     <button type="button" class="metube-section-toggle" (click)="toggleDownloadingCollapsed()" [attr.aria-expanded]="!downloadingCollapsed">
-      <span>Downloading</span>
+      <span>正在下载 (Downloading)</span>
       <fa-icon [icon]="downloadingCollapsed ? faChevronRight : faChevronDown" class="metube-section-chevron" />
     </button>
   </div>
   @if (!downloadingCollapsed) {
     <div class="px-2 py-3 border-bottom">
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #queueDelSelected (click)="delSelectedDownloads('queue')"><fa-icon [icon]="faTrashAlt" />&nbsp; Cancel selected</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #queueDownloadSelected (click)="startSelectedDownloads('queue')"><fa-icon [icon]="faDownload" />&nbsp; Download selected</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #queueDelSelected (click)="delSelectedDownloads('queue')"><fa-icon [icon]="faTrashAlt" />&nbsp; 取消选中任务</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #queueDownloadSelected (click)="startSelectedDownloads('queue')"><fa-icon [icon]="faDownload" />&nbsp; 开始选中任务</button>
     </div>
     <div class="overflow-auto">
       <table class="table">
@@ -708,11 +697,11 @@
             <th scope="col" style="width: 1rem;">
               <app-select-all-checkbox #queueMasterCheckboxRef [id]="'queue'" [list]="downloads.queue" (changed)="queueSelectionChanged($event)" />
             </th>
-            <th scope="col">Video</th>
-            <th scope="col" style="width: 7rem;">Format</th>
-            <th scope="col" style="width: 8rem;">Speed</th>
-            <th scope="col" style="width: 7rem;">ETA</th>
-            <th scope="col" style="width: 6rem;"></th>
+            <th scope="col">视频名称</th>
+            <th scope="col" style="width: 7rem;">格式</th>
+            <th scope="col" style="width: 8rem;">下载速度</th>
+            <th scope="col" style="width: 7rem;">剩余时间</th>
+            <th scope="col" style="width: 6rem;">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -726,22 +715,22 @@
                   <div class="d-flex align-items-center flex-wrap gap-2">
                     <span>{{ download.value.title }}</span>
                     @if (download.value.live_status === 'is_live' && download.value.status !== 'scheduled') {
-                      <span class="badge bg-danger">LIVE</span>
+                      <span class="badge bg-danger">直播中</span>
                     }
                   </div>
                   @if (download.value.status === 'scheduled') {
                     <span class="badge bg-warning text-dark">
                       <fa-icon [icon]="faClock" />
-                      Waiting for stream
+                      等待直播开始
                       @if (liveCountdownSeconds(download.value); as secs) {
-                        - starts in {{ secs | eta }}
+                        - 将在 {{ secs | eta }} 后开始
                       }
                     </span>
                   } @else {
                     <ngb-progressbar height="1.5rem" [showValue]="!isIndeterminate(download.value)" [striped]="isIndeterminate(download.value)" [animated]="isIndeterminate(download.value)" type="success"
                     [value]="isIndeterminate(download.value) ? 100 : download.value.percent" class="download-progressbar">
                       @if (download.value.status === 'postprocessing') {
-                        <span>Post-processing</span>
+                        <span>正在合并封装处理中 (Post-processing)...</span>
                       }
                     </ngb-progressbar>
                   }
@@ -753,10 +742,10 @@
               <td>
                 <div class="d-flex">
                   @if (download.value.status === 'pending' || download.value.status === 'scheduled') {
-                    <button type="button" class="btn btn-link" [attr.aria-label]="'Start download for ' + download.value.title" (click)="downloadItemByKey(download.key)"><fa-icon [icon]="faDownload" /></button>
+                    <button type="button" class="btn btn-link" [attr.aria-label]="'开始下载 ' + download.value.title" (click)="downloadItemByKey(download.key)"><fa-icon [icon]="faDownload" /></button>
                   }
-                  <button type="button" class="btn btn-link" [attr.aria-label]="'Remove ' + download.value.title + ' from queue'" (click)="delDownload('queue', download.key)"><fa-icon [icon]="faTrashAlt" /></button>
-                  <a href="{{download.value.url}}" target="_blank" class="btn btn-link" [attr.aria-label]="'Open source URL for ' + download.value.title"><fa-icon [icon]="faExternalLinkAlt" /></a>
+                  <button type="button" class="btn btn-link" [attr.aria-label]="'从队列中删除 ' + download.value.title" (click)="delDownload('queue', download.key)"><fa-icon [icon]="faTrashAlt" /></button>
+                  <a href="{{download.value.url}}" target="_blank" class="btn btn-link" [attr.aria-label]="'打开视频源网页 ' + download.value.title"><fa-icon [icon]="faExternalLinkAlt" /></a>
                 </div>
               </td>
             </tr>
@@ -766,20 +755,21 @@
     </div>
   }
 
+  <!-- 已完成列表 -->
   <div class="metube-section-header">
     <button type="button" class="metube-section-toggle" (click)="toggleCompletedCollapsed()" [attr.aria-expanded]="!completedCollapsed">
-      <span>Completed</span>
+      <span>已完成 (Completed)</span>
       <fa-icon [icon]="completedCollapsed ? faChevronRight : faChevronDown" class="metube-section-chevron" />
     </button>
   </div>
   @if (!completedCollapsed) {
     <div class="px-2 py-3 border-bottom">
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" (click)="toggleSortOrder()" ngbTooltip="{{ sortAscending ? 'Oldest first' : 'Newest first' }}"><fa-icon [icon]="sortAscending ? faSortAmountUp : faSortAmountDown" />&nbsp; {{ sortAscending ? 'Oldest first' : 'Newest first' }}</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDelSelected (click)="delSelectedDownloads('done')"><fa-icon [icon]="faTrashAlt" />&nbsp; Clear selected</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasCompletedDone" (click)="clearCompletedDownloads()"><fa-icon [icon]="faCheckCircle" />&nbsp; Clear completed</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="clearFailedDownloads()"><fa-icon [icon]="faTimesCircle" />&nbsp; Clear failed</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="retryFailedDownloads()"><fa-icon [icon]="faRedoAlt" />&nbsp; Retry failed</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDownloadSelected (click)="downloadSelectedFiles()"><fa-icon [icon]="faDownload" />&nbsp; Download Selected</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" (click)="toggleSortOrder()" ngbTooltip="{{ sortAscending ? '最早优先' : '最新优先' }}"><fa-icon [icon]="sortAscending ? faSortAmountUp : faSortAmountDown" />&nbsp; {{ sortAscending ? '最早优先' : '最新优先' }}</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDelSelected (click)="delSelectedDownloads('done')"><fa-icon [icon]="faTrashAlt" />&nbsp; 清除选中记录</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasCompletedDone" (click)="clearCompletedDownloads()"><fa-icon [icon]="faCheckCircle" />&nbsp; 清空所有已完成</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="clearFailedDownloads()"><fa-icon [icon]="faTimesCircle" />&nbsp; 清空所有失败</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="retryFailedDownloads()"><fa-icon [icon]="faRedoAlt" />&nbsp; 重试失败任务</button>
+      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDownloadSelected (click)="downloadSelectedFiles()"><fa-icon [icon]="faDownload" />&nbsp; 保存选中文件到本地</button>
     </div>
     <div class="overflow-auto">
       <table class="table">
@@ -788,13 +778,13 @@
             <th scope="col" style="width: 1rem;">
               <app-select-all-checkbox #doneMasterCheckboxRef [id]="'done'" [list]="downloads.done" [orderedIds]="cachedSortedDoneIds" (changed)="doneSelectionChanged($event)" />
             </th>
-            <th scope="col">Video</th>
-            <th scope="col">Type</th>
-            <th scope="col">Quality</th>
-            <th scope="col">Codec / Format</th>
-            <th scope="col">File Size</th>
-            <th scope="col">Downloaded</th>
-            <th scope="col" style="width: 8rem;"></th>
+            <th scope="col">视频名称</th>
+            <th scope="col">类型</th>
+            <th scope="col">画质</th>
+            <th scope="col">编码 / 格式</th>
+            <th scope="col">文件大小</th>
+            <th scope="col">下载时间</th>
+            <th scope="col" style="width: 8rem;">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -811,7 +801,7 @@
                   @if (entry[1].status === 'error') {
                     <button type="button" class="btn btn-link p-0"
                       (click)="toggleErrorDetail(entry[0])"
-                      [attr.aria-label]="'Toggle error details for ' + entry[1].title"
+                      [attr.aria-label]="'查看错误详情 ' + entry[1].title"
                       [attr.aria-expanded]="isErrorExpanded(entry[0])">
                       <fa-icon [icon]="faTimesCircle" class="text-danger" />
                     </button>
@@ -825,7 +815,7 @@
                       {{entry[1].title}}
                       @if (!isErrorExpanded(entry[0])) {
                         <small class="text-danger ms-2">
-                          <fa-icon [icon]="faChevronRight" size="xs" class="me-1" />Click for details
+                          <fa-icon [icon]="faChevronRight" size="xs" class="me-1" />点击查看错误详情
                         </small>
                       }
                     </button>
@@ -838,18 +828,18 @@
                     <div class="d-flex justify-content-between align-items-start">
                       <div class="flex-grow-1">
                         @if (entry[1].msg) {
-                          <div class="mb-1"><strong>Message:</strong> {{entry[1].msg}}</div>
+                          <div class="mb-1"><strong>信息:</strong> {{entry[1].msg}}</div>
                         }
                         @if (entry[1].error) {
-                          <div class="mb-1"><strong>Error:</strong> {{entry[1].error}}</div>
+                          <div class="mb-1"><strong>错误:</strong> {{entry[1].error}}</div>
                         }
-                        <div class="text-muted" style="word-break: break-all;"><strong>URL:</strong> {{entry[1].url}}</div>
+                        <div class="text-muted" style="word-break: break-all;"><strong>链接:</strong> {{entry[1].url}}</div>
                       </div>
                       <button type="button" class="btn btn-sm btn-outline-danger ms-2 flex-shrink-0"
                         (click)="copyErrorMessage(entry[0], entry[1]); $event.stopPropagation()"
-                        ngbTooltip="Copy error details to clipboard">
+                        ngbTooltip="复制错误信息到剪贴板">
                         @if (lastCopiedErrorId === entry[0]) {
-                          <span class="text-success">Copied!</span>
+                          <span class="text-success">已复制!</span>
                         } @else {
                           <fa-icon [icon]="faCopy" />
                         }
@@ -880,16 +870,16 @@
               <td>
                 <div class="d-flex">
                   @if (entry[1].status === 'error') {
-                    <button type="button" class="btn btn-link" [attr.aria-label]="'Retry download for ' + entry[1].title" (click)="retryDownload(entry[0], entry[1])"><fa-icon [icon]="faRedoAlt" /></button>
+                    <button type="button" class="btn btn-link" [attr.aria-label]="'重试下载 ' + entry[1].title" (click)="retryDownload(entry[0], entry[1])"><fa-icon [icon]="faRedoAlt" /></button>
                   }
                   @if (entry[1].filename) {
-                    <a href="{{buildDownloadLink(entry[1])}}" download class="btn btn-link" [attr.aria-label]="'Download result file for ' + entry[1].title"><fa-icon [icon]="faDownload" /></a>
+                    <a href="{{buildDownloadLink(entry[1])}}" download class="btn btn-link" [attr.aria-label]="'保存到本地 ' + entry[1].title"><fa-icon [icon]="faDownload" /></a>
                   }
                   @if (entry[1].filename && canShareDownloads()) {
-                    <button type="button" class="btn btn-link" [attr.aria-label]="'Share result file for ' + entry[1].title" (click)="shareDownload(entry[1])"><fa-icon [icon]="faShareNodes" /></button>
+                    <button type="button" class="btn btn-link" [attr.aria-label]="'分享文件 ' + entry[1].title" (click)="shareDownload(entry[1])"><fa-icon [icon]="faShareNodes" /></button>
                   }
-                  <a href="{{entry[1].url}}" target="_blank" class="btn btn-link" [attr.aria-label]="'Open source URL for ' + entry[1].title"><fa-icon [icon]="faExternalLinkAlt" /></a>
-                  <button type="button" class="btn btn-link" [attr.aria-label]="'Delete completed item ' + entry[1].title" (click)="delDownload('done', entry[0])"><fa-icon [icon]="faTrashAlt" /></button>
+                  <a href="{{entry[1].url}}" target="_blank" class="btn btn-link" [attr.aria-label]="'打开视频源 ' + entry[1].title"><fa-icon [icon]="faExternalLinkAlt" /></a>
+                  <button type="button" class="btn btn-link" [attr.aria-label]="'删除已完成记录 ' + entry[1].title" (click)="delDownload('done', entry[0])"><fa-icon [icon]="faTrashAlt" /></button>
                 </div>
               </td>
             </tr>
@@ -900,7 +890,7 @@
                 <td>
                   <div style="padding-left: 2rem;">
                 <fa-icon [icon]="faCheckCircle" class="text-success me-2" />
-                <a href="{{buildChapterDownloadLink(entry[1], chapterFile.filename)}}" target="_blank" [attr.aria-label]="'Open chapter file ' + getChapterFileName(chapterFile.filename)">{{
+                <a href="{{buildChapterDownloadLink(entry[1], chapterFile.filename)}}" target="_blank" [attr.aria-label]="'打开章节文件 ' + getChapterFileName(chapterFile.filename)">{{
                   getChapterFileName(chapterFile.filename) }}</a>
               </div>
             </td>
@@ -915,7 +905,7 @@
             <td></td>
             <td>
               <div class="d-flex">
-                <a href="{{buildChapterDownloadLink(entry[1], chapterFile.filename)}}" download [attr.aria-label]="'Download chapter file ' + getChapterFileName(chapterFile.filename)"
+                <a href="{{buildChapterDownloadLink(entry[1], chapterFile.filename)}}" download [attr.aria-label]="'下载章节文件 ' + getChapterFileName(chapterFile.filename)"
                   class="btn btn-link"><fa-icon [icon]="faDownload" /></a>
               </div>
             </td>
@@ -928,9 +918,10 @@
     </div>
   }
 
+  <!-- 订阅管理列表 -->
   <div class="metube-section-header">
     <button type="button" class="metube-section-toggle" (click)="toggleSubscriptionsCollapsed()" [attr.aria-expanded]="!subscriptionsCollapsed">
-      <span>Subscriptions</span>
+      <span>订阅管理 (Subscriptions)</span>
       <fa-icon [icon]="subscriptionsCollapsed ? faChevronRight : faChevronDown" class="metube-section-chevron" />
     </button>
   </div>
@@ -938,30 +929,30 @@
     <div class="px-2 py-3 border-bottom">
       @if (checkingAllSubscriptions) {
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled>
-          <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Check all now
+          <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>正在检查全部订阅...
         </button>
       } @else {
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4"
           (click)="checkAllSubscriptions()"
           [disabled]="downloads.loading || cachedSubs.length === 0 || checkingSelectedSubscriptions">
-          <fa-icon [icon]="faRedoAlt" />&nbsp; Check all now
+          <fa-icon [icon]="faRedoAlt" />&nbsp; 立即检查全部更新
         </button>
       }
       @if (checkingSelectedSubscriptions) {
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled>
-          <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Check selected
+          <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>正在检查选中订阅...
         </button>
       } @else {
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4"
           (click)="checkSelectedSubscriptions()"
           [disabled]="downloads.loading || selectedSubscriptionIds.size === 0 || checkingAllSubscriptions">
-          <fa-icon [icon]="faRedoAlt" />&nbsp; Check selected
+          <fa-icon [icon]="faRedoAlt" />&nbsp; 立即检查选中订阅
         </button>
       }
       <button type="button" class="btn btn-link text-decoration-none px-0 me-4"
         (click)="deleteSelectedSubscriptions()"
         [disabled]="downloads.loading || selectedSubscriptionIds.size === 0">
-        <fa-icon [icon]="faTrashAlt" />&nbsp; Delete selected
+        <fa-icon [icon]="faTrashAlt" />&nbsp; 删除选中订阅
       </button>
     </div>
     <div class="overflow-auto">
@@ -973,15 +964,15 @@
                 [checked]="allSubsSelected()"
                 (change)="toggleSubMaster($event)"
                 [disabled]="downloads.loading || cachedSubs.length === 0"
-                aria-label="Select all subscriptions" />
+                aria-label="全选所有订阅" />
             </th>
-            <th scope="col">Name</th>
-            <th scope="col">URL</th>
-            <th scope="col" class="text-nowrap"><span class="help-title" ngbPopover="Subscriptions only — which new video titles to queue when this feed is checked. Does not affect manual downloads." triggers="click" autoClose="outside" container="body">Filter</span></th>
-            <th scope="col" class="text-nowrap">Interval (min)</th>
-            <th scope="col" class="text-nowrap">Last checked</th>
-            <th scope="col">Status</th>
-            <th scope="col" style="width: 8rem;"></th>
+            <th scope="col">订阅名称</th>
+            <th scope="col">订阅链接</th>
+            <th scope="col" class="text-nowrap"><span class="help-title" ngbPopover="订阅专属过滤规则：仅将符合该正则规则的新视频加入下载队列。" triggers="click" autoClose="outside" container="body">标题过滤</span></th>
+            <th scope="col" class="text-nowrap">检查周期 (分钟)</th>
+            <th scope="col" class="text-nowrap">上次检查时间</th>
+            <th scope="col">状态</th>
+            <th scope="col" style="width: 8rem;">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -992,7 +983,7 @@
                   [checked]="isSubSelected(entry[0])"
                   (change)="toggleSubSelected(entry[0])"
                   [disabled]="downloads.loading"
-                  [attr.aria-label]="'Select subscription ' + entry[1].name" />
+                  [attr.aria-label]="'选择订阅 ' + entry[1].name" />
               </td>
               <td>
                 @if (editingNameId === entry[0]) {
@@ -1003,13 +994,13 @@
                       [(ngModel)]="nameEditDraft"
                       [maxlength]="subscriptionNameMaxLength"
                       [disabled]="downloads.loading"
-                      [attr.aria-label]="'Subscription name for ' + entry[1].name" />
+                      [attr.aria-label]="'订阅名称 ' + entry[1].name" />
                     <button type="button" class="btn btn-sm btn-outline-secondary"
                       (click)="saveName(entry[0])"
-                      [disabled]="downloads.loading">Save</button>
+                      [disabled]="downloads.loading">保存</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary"
                       (click)="cancelEditName()"
-                      [disabled]="downloads.loading">Cancel</button>
+                      [disabled]="downloads.loading">取消</button>
                   </div>
                 } @else {
                   <div class="d-flex flex-wrap gap-1 align-items-center">
@@ -1017,7 +1008,7 @@
                     <button type="button" class="btn btn-link btn-sm p-0"
                       (click)="beginEditName(entry[0], entry[1].name)"
                       [disabled]="downloads.loading"
-                      ngbTooltip="Rename this subscription (display name only; does not affect the download folder)">Edit</button>
+                      ngbTooltip="重命名订阅 (仅修改显示名称)">编辑</button>
                   </div>
                 }
               </td>
@@ -1032,10 +1023,10 @@
                       [disabled]="downloads.loading" />
                     <button type="button" class="btn btn-sm btn-outline-secondary"
                       (click)="saveTitleRegex(entry[0])"
-                      [disabled]="downloads.loading">Save</button>
+                      [disabled]="downloads.loading">保存</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary"
                       (click)="cancelEditTitleRegex()"
-                      [disabled]="downloads.loading">Cancel</button>
+                      [disabled]="downloads.loading">取消</button>
                   </div>
                 } @else {
                   <div class="d-flex flex-wrap gap-1 align-items-center">
@@ -1044,7 +1035,7 @@
                     <button type="button" class="btn btn-link btn-sm p-0"
                       (click)="beginEditTitleRegex(entry[0], entry[1].title_regex)"
                       [disabled]="downloads.loading"
-                      ngbTooltip="Edit subscription title filter (subscriptions only; not for one-off downloads)">Edit</button>
+                      ngbTooltip="编辑标题正则过滤规则">编辑</button>
                   </div>
                 }
               </td>
@@ -1060,9 +1051,9 @@
                 @if (entry[1].error) {
                   <span class="text-danger small">{{ entry[1].error }}</span>
                 } @else if (entry[1].enabled) {
-                  <span class="text-success">Active</span>
+                  <span class="text-success">运行中</span>
                 } @else {
-                  <span class="text-secondary">Paused</span>
+                  <span class="text-secondary">已暂停</span>
                 }
               </td>
               <td>
@@ -1070,24 +1061,24 @@
                   @if (isSubscriptionChecking(entry[0])) {
                     <button type="button" class="btn btn-link btn-sm p-0 me-2"
                       disabled
-                      [attr.aria-label]="'Checking ' + entry[1].name"
-                      ngbTooltip="Checking now">
+                      [attr.aria-label]="'正在检查 ' + entry[1].name"
+                      ngbTooltip="正在检查">
                       <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                     </button>
                   } @else {
                     <button type="button" class="btn btn-link btn-sm p-0 me-2"
                       (click)="checkSubscriptionNow(entry[0])"
                       [disabled]="downloads.loading"
-                      [attr.aria-label]="'Check now ' + entry[1].name"
-                      ngbTooltip="Check now">
+                      [attr.aria-label]="'立即检查 ' + entry[1].name"
+                      ngbTooltip="立即检查">
                       <fa-icon [icon]="faRedoAlt" />
                     </button>
                   }
                   <button type="button" class="btn btn-link btn-sm p-0 me-2"
                     (click)="toggleSubscriptionEnabled(entry[1])"
                     [disabled]="downloads.loading"
-                    [attr.aria-label]="(entry[1].enabled ? 'Pause ' : 'Resume ') + entry[1].name"
-                    [ngbTooltip]="entry[1].enabled ? 'Pause' : 'Resume'">
+                    [attr.aria-label]="(entry[1].enabled ? '暂停 ' : '恢复 ') + entry[1].name"
+                    [ngbTooltip]="entry[1].enabled ? '暂停' : '恢复'">
                     @if (entry[1].enabled) {
                       <fa-icon [icon]="faPause" />
                     } @else {
@@ -1097,7 +1088,7 @@
                   <button type="button" class="btn btn-link btn-sm p-0 text-danger"
                     (click)="deleteSubscription(entry[0])"
                     [disabled]="downloads.loading"
-                    [attr.aria-label]="'Delete subscription ' + entry[1].name">
+                    [attr.aria-label]="'删除订阅 ' + entry[1].name">
                     <fa-icon [icon]="faTrashAlt" />
                   </button>
                 </div>
@@ -1108,25 +1099,25 @@
       </table>
     </div>
   }
-</main><!-- /.container -->
+</main>
 
 <footer class="footer navbar-dark bg-dark py-3 mt-5">
   <div class="container text-center">
     @if (ytDlpVersion && metubeVersion) {
       <div class="footer-content">
         <div class="version-item">
-          <span class="version-label">yt-dlp</span>
+          <span class="version-label">yt-dlp 引擎</span>
           <span class="version-value">{{ytDlpVersion}}</span>
         </div>
         <div class="version-separator"></div>
         <div class="version-item">
-          <span class="version-label">MeTube</span>
+          <span class="version-label">MeTube 版本</span>
           <span class="version-value">{{metubeVersion}}</span>
         </div>
         <div class="version-separator"></div>
         @if (ytDlpOptionsUpdateTime) {
           <div class="version-item">
-            <span class="version-label">yt-dlp-options</span>
+            <span class="version-label">配置更新时间</span>
             <span class="version-value">{{ytDlpOptionsUpdateTime}}</span>
           </div>
         }
