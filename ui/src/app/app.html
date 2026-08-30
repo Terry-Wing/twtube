@@ -779,6 +779,7 @@
               <app-select-all-checkbox #doneMasterCheckboxRef [id]="'done'" [list]="downloads.done" [orderedIds]="cachedSortedDoneIds" (changed)="doneSelectionChanged($event)" />
             </th>
             <th scope="col">视频名称</th>
+            <th scope="col" class="text-nowrap">平台</th>
             <th scope="col">类型</th>
             <th scope="col">画质</th>
             <th scope="col">编码 / 格式</th>
@@ -849,6 +850,9 @@
                 }
               </td>
               <td class="text-nowrap">
+                <span class="badge bg-secondary">{{ getPlatformName(entry[1].url) }}</span>
+              </td>
+              <td class="text-nowrap">
                 {{ downloadTypeLabel(entry[1]) }}
               </td>
               <td class="text-nowrap">
@@ -894,6 +898,7 @@
                   getChapterFileName(chapterFile.filename) }}</a>
               </div>
             </td>
+            <td></td>
             <td></td>
             <td></td>
             <td></td>

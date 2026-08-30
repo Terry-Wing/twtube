@@ -914,6 +914,18 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     return q.charAt(0).toUpperCase() + q.slice(1);
   }
 
+  getPlatformName(url: string | undefined): string {
+    if (!url) return '默认';
+    const u = url.toLowerCase();
+    if (u.includes('youtube.com') || u.includes('youtu.be')) return 'YouTube';
+    if (u.includes('instagram.com') || u.includes('instagr.am')) return 'Instagram';
+    if (u.includes('tiktok.com')) return 'TikTok';
+    if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'B站';
+    if (u.includes('twitter.com') || u.includes('x.com')) return 'X/Twitter';
+    if (u.includes('facebook.com') || u.includes('fb.watch')) return 'Facebook';
+    return '网页';
+  }
+
   downloadTypeLabel(download: Download): string {
     const type = download.download_type || 'video';
     const map: Record<string, string> = {
