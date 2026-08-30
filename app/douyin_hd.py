@@ -4,7 +4,6 @@ import json
 import logging
 import asyncio
 import aiohttp
-import aiofiles
 
 log = logging.getLogger('douyin_hd')
 
@@ -63,9 +62,7 @@ def _load_cookies_dict() -> dict:
 
 
 async def get_douyin_video_detail(url: str) -> dict:
-    """
-    抓取抖音最高清视频直链元数据（解析 1080P/2K/4K）
-    """
+    """抓取抖音最高清视频直链元数据"""
     video_id = await resolve_douyin_redirect(url)
     if not video_id:
         return None
@@ -73,7 +70,7 @@ async def get_douyin_video_detail(url: str) -> dict:
     cookies = _load_cookies_dict()
     target_url = f"https://www.douyin.com/video/{video_id}"
 
-    # 1. 尝试从网页端 JSON 中提取
+    # 1. 网页端 JSON 提取
     try:
         async with aiohttp.ClientSession(headers=DOUYIN_HEADERS, cookies=cookies) as session:
             async with session.get(target_url, timeout=15) as resp:
@@ -111,7 +108,6 @@ async def get_douyin_video_detail(url: str) -> dict:
 
 def _extract_stream_from_aweme(aweme: dict, video_id: str) -> dict:
     desc = aweme.get('desc', video_id).strip() or f"抖音视频_{video_id}"
-    # 清理 Windows 文件名非法字符
     safe_title = re.sub(r'[\\/:*?"<>|]', '_', desc)
 
     author = aweme.get('author', {}).get('nickname', 'douyin_user')
@@ -159,25 +155,39 @@ def _extract_stream_from_aweme(aweme: dict, video_id: str) -> dict:
     }
 
 
+def _write_chunks_to_file(filepath: str, chunks_data: bytes):
+    with open(filepath, 'ab') as f:
+        f.write(chunks_data)
+
+
 async def direct_download_douyin_video(detail: dict, download_dir: str) -> str:
-    """直接流式下载超清 MP4 文件到目标文件夹，不经过 yt-dlp 重新压制"""
+    """直接流式下载超清 MP4（纯内置标准库，无外部依赖）"""
     target_folder = os.path.join(download_dir, 'douyin')
     os.makedirs(target_folder, exist_ok=True)
 
     filename = f"{detail['title']} - {detail['author']}.mp4"
     filepath = os.path.join(target_folder, filename)
 
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
     headers = {
         'User-Agent': DOUYIN_HEADERS['User-Agent'],
         'Referer': 'https://www.douyin.com/',
     }
 
+    loop = asyncio.get_running_loop()
     async with aiohttp.ClientSession(headers=headers) as session:
         async with session.get(detail['play_url'], timeout=120) as resp:
             if resp.status == 200:
-                async with aiofiles.open(filepath, mode='wb') as f:
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
-                        await f.write(chunk)
+                while True:
+                    chunk = await resp.content.read(64 * 1024)
+                    if not chunk:
+                        break
+                    await loop.run_in_executor(None, _write_chunks_to_file, filepath, chunk)
                 log.info(f"抖音 1080P/4K 视频已成功直接落盘: {filepath}")
                 return filepath
             else:
