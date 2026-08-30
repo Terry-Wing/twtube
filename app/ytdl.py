@@ -33,6 +33,21 @@ from urllib.parse import urlsplit
 log = logging.getLogger('ytdl')
 
 
+def _detect_platform_subfolder(url: str) -> str:
+    url_lower = (url or '').lower()
+    if 'douyin.com' in url_lower or 'iesdouyin.com' in url_lower:
+        return 'douyin'
+    elif 'tiktok.com' in url_lower:
+        return 'tiktok'
+    elif 'instagram.com' in url_lower or 'instagr.am' in url_lower:
+        return 'instagram'
+    elif 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+        return 'youtube'
+    elif 'bilibili.com' in url_lower or 'b23.tv' in url_lower:
+        return 'bilibili'
+    return 'default'
+
+
 # Fragmented and live downloads can emit a warning per fragment, and the joined
 # text is persisted with the completed queue and broadcast to every client, so
 # only the last few distinct warnings are kept.
@@ -1990,6 +2005,9 @@ class DownloadQueue:
     ):
         if ytdl_options_presets is None:
             ytdl_options_presets = []
+        # 如果未指定保存子目录，根据 URL 自动归类到对应平台文件夹
+        if not folder or not str(folder).strip():
+            folder = _detect_platform_subfolder(url)
         log.info(
             f'adding {url}: {download_type=} {codec=} {format=} {quality=} {already=} {folder=} {custom_name_prefix=} '
             f'{playlist_item_limit=} {auto_start=} {split_by_chapters=} {chapter_template=} '

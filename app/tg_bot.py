@@ -74,7 +74,7 @@ class TelegramBotManager:
                 codec='auto',
                 format='any',
                 quality='best',
-                folder=target_folder,
+                folder='',
                 custom_name_prefix='',
                 playlist_item_limit=0,
                 auto_start=True,
