@@ -1610,6 +1610,16 @@ class DownloadQueue:
         # docstring for why the guard can't be installed process-wide.
         debug_logging = logging.getLogger().isEnabledFor(logging.DEBUG)
         user_opts = self._build_ytdl_options(ytdl_options_presets, ytdl_options_overrides)
+        
+        # 专门增强抖音高清提取策略
+        if 'douyin.com' in (url or '') or 'iesdouyin.com' in (url or ''):
+            if 'extractor_args' not in user_opts:
+                user_opts['extractor_args'] = {}
+            user_opts['extractor_args']['douyin'] = {
+                'api_hostname': 'www.douyin.com',
+                'clean_html': 'true'
+            }
+
         params = {
             **user_opts,
             'quiet': not debug_logging,
