@@ -905,6 +905,12 @@ class Download:
             put_status = self._make_progress_hook()
             put_status_postprocessor = self._make_postprocessor_hook()
 
+            download_opts = dict(self.ytdl_opts)
+            if 'douyin.com' in (self.info.url or '') or 'iesdouyin.com' in (self.info.url or ''):
+                download_opts.setdefault('http_headers', {})
+                download_opts['http_headers']['Referer'] = 'https://www.douyin.com/'
+                download_opts['http_headers']['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+
             ytdl_params = {
                 'quiet': not debug_logging,
                 'verbose': debug_logging,
@@ -916,7 +922,7 @@ class Download:
                 'ignore_no_formats_error': True,
                 'progress_hooks': [put_status],
                 'postprocessor_hooks': [put_status_postprocessor],
-                **self.ytdl_opts,
+                **download_opts,
             }
             # Set after the ytdl_opts merge: the failure messages below depend on
             # this logger, so a user-supplied one must not replace it.
@@ -1619,6 +1625,9 @@ class DownloadQueue:
                 'api_hostname': 'www.douyin.com',
                 'clean_html': 'true'
             }
+            user_opts.setdefault('http_headers', {})
+            user_opts['http_headers']['Referer'] = 'https://www.douyin.com/'
+            user_opts['http_headers']['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
         params = {
             **user_opts,
