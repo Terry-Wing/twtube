@@ -1,16 +1,18 @@
+import os
 import re
 import json
-import urllib.parse
-import aiohttp
 import logging
+import asyncio
+import aiohttp
+import aiofiles
 
 log = logging.getLogger('douyin_hd')
 
 DOUYIN_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
     'Referer': 'https://www.douyin.com/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
 }
 
 
@@ -28,7 +30,7 @@ def extract_douyin_video_id(url: str) -> str:
 
 
 async def resolve_douyin_redirect(url: str) -> str:
-    """自动解析短链重定向"""
+    """解析短链重定向"""
     if 'v.douyin.com' in url or 'iesdouyin.com' in url:
         try:
             async with aiohttp.ClientSession(headers=DOUYIN_HEADERS) as session:
@@ -38,26 +40,16 @@ async def resolve_douyin_redirect(url: str) -> str:
                     if vid:
                         return vid
         except Exception as e:
-            log.warning(f"解析抖音短链重定向失败: {e}")
+            log.warning(f"解析短链重定向失败: {e}")
     return extract_douyin_video_id(url)
 
 
-async def fetch_douyin_hd_info(url: str) -> dict:
-    """
-    双重解析策略：
-    1. 网页 HTML 内嵌高清数据直提 (最高画质)
-    2. 移动端 API 备用兜底
-    """
-    video_id = await resolve_douyin_redirect(url)
-    if not video_id:
-        return None
-
-    # 读取容器挂载的 cookies.txt（如果有）
+def _load_cookies_dict() -> dict:
+    """从容器 cookies.txt 读取抖音 Cookie"""
     cookies_dict = {}
-    try:
-        cookie_path = "/config/cookies.txt"
-        import os
-        if os.path.exists(cookie_path):
+    cookie_path = "/config/cookies.txt"
+    if os.path.exists(cookie_path):
+        try:
             with open(cookie_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
                     if line.startswith('#') or not line.strip():
@@ -65,31 +57,28 @@ async def fetch_douyin_hd_info(url: str) -> dict:
                     parts = line.strip().split('\t')
                     if len(parts) >= 7 and 'douyin.com' in parts[0]:
                         cookies_dict[parts[5]] = parts[6]
-    except Exception as e:
-        log.warning(f"读取 cookies.txt 失败: {e}")
+        except Exception as e:
+            log.warning(f"加载 cookies 失败: {e}")
+    return cookies_dict
 
-    # 策略 1：直接抓取网页 HTML 提取渲染 JSON
+
+async def get_douyin_video_detail(url: str) -> dict:
+    """
+    抓取抖音最高清视频直链元数据（解析 1080P/2K/4K）
+    """
+    video_id = await resolve_douyin_redirect(url)
+    if not video_id:
+        return None
+
+    cookies = _load_cookies_dict()
     target_url = f"https://www.douyin.com/video/{video_id}"
+
+    # 1. 尝试从网页端 JSON 中提取
     try:
-        async with aiohttp.ClientSession(headers=DOUYIN_HEADERS, cookies=cookies_dict) as session:
+        async with aiohttp.ClientSession(headers=DOUYIN_HEADERS, cookies=cookies) as session:
             async with session.get(target_url, timeout=15) as resp:
                 if resp.status == 200:
                     html_text = await resp.text()
-                    
-                    # 匹配 _ROUTER_DATA 或 RENDER_DATA
-                    match = re.search(r'<script id="RENDER_DATA" type="application/json">([^<]+)</script>', html_text)
-                    if match:
-                        raw_data = urllib.parse.unquote(match.group(1))
-                        json_data = json.loads(raw_data)
-                        # 递归或直接获取 aweme 详情
-                        for k, v in json_data.items():
-                            if isinstance(v, dict) and 'aweme' in v:
-                                aweme = v.get('aweme', {}).get('detailInfo', {}) or v.get('aweme', {})
-                                res = parse_aweme_detail(aweme, video_id)
-                                if res:
-                                    return res
-
-                    # 匹配第二种常见内嵌格式
                     match_router = re.search(r'window\._ROUTER_DATA\s*=\s*(\{.+?\});</script>', html_text)
                     if match_router:
                         json_data = json.loads(match_router.group(1))
@@ -98,45 +87,41 @@ async def fetch_douyin_hd_info(url: str) -> dict:
                             if isinstance(v, dict) and 'videoInfoRes' in v:
                                 item_list = v.get('videoInfoRes', {}).get('item_list', [])
                                 if item_list:
-                                    res = parse_aweme_detail(item_list[0], video_id)
+                                    res = _extract_stream_from_aweme(item_list[0], video_id)
                                     if res:
                                         return res
     except Exception as e:
-        log.warning(f"网页端 HTML 高清解析尝试失败，切换 API: {e}")
+        log.warning(f"网页端提取异常: {e}")
 
-    # 策略 2：移动端 API 兜底
+    # 2. 备用移动端 API
     api_url = f"https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id={video_id}&aid=1128&version_code=190500"
     try:
-        async with aiohttp.ClientSession(headers=DOUYIN_HEADERS, cookies=cookies_dict) as session:
+        async with aiohttp.ClientSession(headers=DOUYIN_HEADERS, cookies=cookies) as session:
             async with session.get(api_url, timeout=15) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
                     aweme_detail = data.get('aweme_detail')
                     if aweme_detail:
-                        return parse_aweme_detail(aweme_detail, video_id)
+                        return _extract_stream_from_aweme(aweme_detail, video_id)
     except Exception as e:
-        log.error(f"移动端 API 解析失败: {e}")
+        log.warning(f"API 提取异常: {e}")
 
     return None
 
 
-def parse_aweme_detail(aweme_detail: dict, video_id: str) -> dict:
-    if not aweme_detail:
-        return None
+def _extract_stream_from_aweme(aweme: dict, video_id: str) -> dict:
+    desc = aweme.get('desc', video_id).strip() or f"抖音视频_{video_id}"
+    # 清理 Windows 文件名非法字符
+    safe_title = re.sub(r'[\\/:*?"<>|]', '_', desc)
 
-    desc = aweme_detail.get('desc', video_id)
-    author = aweme_detail.get('author', {}).get('nickname', 'douyin_user')
-    author_id = aweme_detail.get('author', {}).get('unique_id') or aweme_detail.get('author', {}).get('short_id', '')
-    create_time = aweme_detail.get('create_time', 0)
-
-    video_obj = aweme_detail.get('video', {})
+    author = aweme.get('author', {}).get('nickname', 'douyin_user')
+    video_obj = aweme.get('video', {})
     bit_rate_list = video_obj.get('bit_rate', [])
 
     best_url = None
     width = 0
     height = 0
 
-    # 优先从最高码率/最高分辨率列表提取
     if bit_rate_list:
         sorted_rates = sorted(
             bit_rate_list,
@@ -164,23 +149,36 @@ def parse_aweme_detail(aweme_detail: dict, video_id: str) -> dict:
     if not best_url:
         return None
 
-    upload_date = ''
-    if create_time:
-        import datetime
-        upload_date = datetime.datetime.fromtimestamp(create_time).strftime('%Y%m%d')
-
     return {
         'id': video_id,
-        'title': desc.strip() or f"抖音视频_{video_id}",
-        'url': best_url,
-        'webpage_url': f"https://www.douyin.com/video/{video_id}",
-        'uploader': author,
-        'uploader_id': author_id,
-        'channel': author,
-        'upload_date': upload_date,
-        'ext': 'mp4',
+        'title': safe_title,
+        'author': author,
+        'play_url': best_url,
         'width': width,
         'height': height,
-        '_type': 'video',
-        'direct': True,
     }
+
+
+async def direct_download_douyin_video(detail: dict, download_dir: str) -> str:
+    """直接流式下载超清 MP4 文件到目标文件夹，不经过 yt-dlp 重新压制"""
+    target_folder = os.path.join(download_dir, 'douyin')
+    os.makedirs(target_folder, exist_ok=True)
+
+    filename = f"{detail['title']} - {detail['author']}.mp4"
+    filepath = os.path.join(target_folder, filename)
+
+    headers = {
+        'User-Agent': DOUYIN_HEADERS['User-Agent'],
+        'Referer': 'https://www.douyin.com/',
+    }
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.get(detail['play_url'], timeout=120) as resp:
+            if resp.status == 200:
+                async with aiofiles.open(filepath, mode='wb') as f:
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        await f.write(chunk)
+                log.info(f"抖音 1080P/4K 视频已成功直接落盘: {filepath}")
+                return filepath
+            else:
+                raise RuntimeError(f"下载直链失败，HTTP 状态码: {resp.status}")

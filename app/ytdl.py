@@ -29,7 +29,7 @@ from state_store import AtomicJsonStore, from_json_compatible, read_legacy_shelf
 from subscriptions import _entry_id
 from url_guard import validate_url, install_socket_guard
 from urllib.parse import urlsplit
-from douyin_hd import fetch_douyin_hd_info
+from douyin_hd import get_douyin_video_detail, direct_download_douyin_video
 
 log = logging.getLogger('ytdl')
 
@@ -2046,36 +2046,36 @@ class DownloadQueue:
         # 全局清洗与修复 URL（同时作用于 Web 网页端与 TG 机器人）
         url = _clean_and_normalize_url(url)
 
-        # 针对抖音进行 1080P/2K/4K 专属直链解析拦截
+        # 针对抖音直接解析最高清直链并下载落盘，彻底跳过 yt-dlp 降级
         if 'douyin.com' in (url or '') or 'iesdouyin.com' in (url or ''):
-            hd_entry = await fetch_douyin_hd_info(url)
-            if hd_entry:
-                log.info(f"成功通过专属引擎提取抖音超清视频: {hd_entry['title']} ({hd_entry.get('width')}x{hd_entry.get('height')})")
-                if not folder or not str(folder).strip():
-                    folder = 'douyin'
-                return await self.__add_entry(
-                    hd_entry,
-                    download_type,
-                    codec,
-                    format,
-                    quality,
-                    folder,
-                    custom_name_prefix,
-                    playlist_item_limit,
-                    auto_start,
-                    split_by_chapters,
-                    chapter_template,
-                    subtitle_language,
-                    subtitle_mode,
-                    ytdl_options_presets,
-                    ytdl_options_overrides,
-                    clip_start,
-                    clip_end,
-                    already,
-                    _add_gen,
-                    retry_entry,
-                    sponsorblock=sponsorblock,
-                )
+            try:
+                detail = await get_douyin_video_detail(url)
+                if detail:
+                    log.info(f"成功锁定抖音超清画质: {detail['title']} ({detail.get('width')}x{detail.get('height')})")
+                    saved_path = await direct_download_douyin_video(detail, self.config.DOWNLOAD_DIR)
+                    dl_info = DownloadInfo(
+                        id=detail['id'],
+                        title=detail['title'],
+                        url=url,
+                        quality='best',
+                        download_type='video',
+                        codec='auto',
+                        format='mp4',
+                        folder='douyin',
+                        custom_name_prefix='',
+                        error=None,
+                        entry=None,
+                        playlist_item_limit=0,
+                        split_by_chapters=False,
+                        chapter_template=None,
+                    )
+                    dl_info.status = 'finished'
+                    dl_info.filename = os.path.relpath(saved_path, self.config.DOWNLOAD_DIR)
+                    dl_info.size = os.path.getsize(saved_path) if os.path.exists(saved_path) else 0
+                    await self.notifier.completed(dl_info)
+                    return {'status': 'ok'}
+            except Exception as e:
+                log.error(f"抖音直连下载失败，降级走 yt-dlp: {e}")
 
         if ytdl_options_presets is None:
             ytdl_options_presets = []
