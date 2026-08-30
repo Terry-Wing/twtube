@@ -29,6 +29,7 @@ from state_store import AtomicJsonStore, from_json_compatible, read_legacy_shelf
 from subscriptions import _entry_id
 from url_guard import validate_url, install_socket_guard
 from urllib.parse import urlsplit
+from douyin_hd import fetch_douyin_hd_info
 
 log = logging.getLogger('ytdl')
 
@@ -2044,6 +2045,37 @@ class DownloadQueue:
     ):
         # 全局清洗与修复 URL（同时作用于 Web 网页端与 TG 机器人）
         url = _clean_and_normalize_url(url)
+
+        # 针对抖音进行 1080P/2K/4K 专属直链解析拦截
+        if 'douyin.com' in (url or '') or 'iesdouyin.com' in (url or ''):
+            hd_entry = await fetch_douyin_hd_info(url)
+            if hd_entry:
+                log.info(f"成功通过专属引擎提取抖音超清视频: {hd_entry['title']} ({hd_entry.get('width')}x{hd_entry.get('height')})")
+                if not folder or not str(folder).strip():
+                    folder = 'douyin'
+                return await self.__add_entry(
+                    hd_entry,
+                    download_type,
+                    codec,
+                    format,
+                    quality,
+                    folder,
+                    custom_name_prefix,
+                    playlist_item_limit,
+                    auto_start,
+                    split_by_chapters,
+                    chapter_template,
+                    subtitle_language,
+                    subtitle_mode,
+                    ytdl_options_presets,
+                    ytdl_options_overrides,
+                    clip_start,
+                    clip_end,
+                    already,
+                    _add_gen,
+                    retry_entry,
+                    sponsorblock=sponsorblock,
+                )
 
         if ytdl_options_presets is None:
             ytdl_options_presets = []
