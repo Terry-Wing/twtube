@@ -57,6 +57,12 @@ class TelegramBotManager:
             await update.message.reply_text("❌ 未检测到有效的视频链接，请重新发送。")
             return
 
+        # 预先进行链接清洗，确保提示与平台识别完全准确
+        if 'douyin.com' in extracted_url and 'modal_id=' in extracted_url:
+            m = re.search(r'modal_id=(\d+)', extracted_url)
+            if m:
+                extracted_url = f"https://www.douyin.com/video/{m.group(1)}"
+
         target_folder = self._detect_platform_folder(extracted_url)
         await update.message.reply_text(
             f"📥 正在解析并加入队列...\n"

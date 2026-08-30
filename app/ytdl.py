@@ -33,6 +33,26 @@ from urllib.parse import urlsplit
 log = logging.getLogger('ytdl')
 
 
+def _clean_and_normalize_url(url: str) -> str:
+    if not url:
+        return url
+    cleaned = url.strip()
+
+    # 1. 自动转换抖音 modal_id 弹窗链接为标准视频链接
+    if 'douyin.com' in cleaned and 'modal_id=' in cleaned:
+        m = re.search(r'modal_id=(\d+)', cleaned)
+        if m:
+            return f"https://www.douyin.com/video/{m.group(1)}"
+
+    # 2. 自动清洗抖音分享文案中夹带的纯 URL (如果是网页端整段粘贴)
+    if 'douyin.com' in cleaned or 'iesdouyin.com' in cleaned:
+        m = re.search(r'https?://[^\s<>"]+', cleaned)
+        if m:
+            cleaned = m.group(0)
+
+    return cleaned
+
+
 def _detect_platform_subfolder(url: str) -> str:
     url_lower = (url or '').lower()
     if 'douyin.com' in url_lower or 'iesdouyin.com' in url_lower:
@@ -2003,6 +2023,9 @@ class DownloadQueue:
         retry_entry=None,
         sponsorblock=False,
     ):
+        # 全局清洗与修复 URL（同时作用于 Web 网页端与 TG 机器人）
+        url = _clean_and_normalize_url(url)
+
         if ytdl_options_presets is None:
             ytdl_options_presets = []
         # 如果未指定保存子目录，根据 URL 自动归类到对应平台文件夹
