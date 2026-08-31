@@ -11,34 +11,37 @@ jobs:
     permissions:
       contents: write
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Set up Python
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      -
-        name: Install uv
+
+      - name: Install uv
         uses: astral-sh/setup-uv@v5
-      -
-        name: Update yt-dlp
+
+      - name: Update yt-dlp
         run: |
-          uv sync --locked
-          # Check if yt-dlp has updates available
-          LATEST_VERSION=$(uv pip list --outdated --format json | jq -r '.[] | select(.name == "yt-dlp") | .latest_version')
-          CURRENT_VERSION=$(uv pip list --format json | jq -r '.[] | select(.name == "yt-dlp") | .version')
+          # 获取当前与线上最新版本号
+          LATEST_VERSION=$(curl -s https://pypi.org/pypi/yt-dlp/json | jq -r '.info.version')
+          CURRENT_VERSION=$(grep -oP '(?<=yt-dlp\[default,curl-cffi\]>=)[0-9.]+' pyproject.toml || echo "")
+
+          echo "当前版本: $CURRENT_VERSION"
+          echo "最新版本: $LATEST_VERSION"
+
           if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
-            echo "Updating yt-dlp from $CURRENT_VERSION to $LATEST_VERSION"
-            uv lock --upgrade-package "yt-dlp[default,curl-cffi]"
-            git config --global user.email "updater@metube"
+            echo "发现新版本，正在更新 pyproject.toml..."
+            sed -i -E "s/yt-dlp\[default,curl-cffi\]>=[0-9.]+/yt-dlp[default,curl-cffi]>=$LATEST_VERSION/g" pyproject.toml
+            
+            git config --global user.email "updater@twtube"
             git config --global user.name "AutoUpdater"
-            git add uv.lock
-            git commit -m "upgrade yt-dlp from $CURRENT_VERSION to $LATEST_VERSION"
+            git add pyproject.toml
+            git commit -m "chore(deps): upgrade yt-dlp to $LATEST_VERSION"
             git push
           else
-            echo "yt-dlp is already up to date ($CURRENT_VERSION)"
+            echo "yt-dlp 已经是最新版本 ($CURRENT_VERSION)"
           fi
