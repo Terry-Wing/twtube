@@ -833,6 +833,33 @@ class Download:
                     filename = os.path.join(finaldir, os.path.basename(filepath))
                 else:
                     filename = filepath
+
+                # --- 智能防覆盖递增逻辑 (_1, _2, _3...) 开始 ---
+                if os.path.exists(filename):
+                    dir_name, full_base = os.path.split(filename)
+                    stem, ext = os.path.splitext(full_base)
+
+                    # 检查目标文件夹下是否存在其它同名文件
+                    counter = 1
+                    new_filename = os.path.join(dir_name, f"{stem}_{counter}{ext}")
+                    while os.path.exists(new_filename):
+                        # 如果当前文件本身就是正在处理的文件（路径完全相同），则不循环
+                        if os.path.abspath(new_filename) == os.path.abspath(filename):
+                            break
+                        counter += 1
+                        new_filename = os.path.join(dir_name, f"{stem}_{counter}{ext}")
+
+                    # 如果生成的新文件名与当前文件不同，执行无损重命名
+                    if new_filename != filename and not os.path.exists(new_filename):
+                        try:
+                            os.rename(filename, new_filename)
+                            filename = new_filename
+                            d['info_dict']['filepath'] = new_filename
+                            log.info(f"检测到同名文件，已自动递增重命名为: {new_filename}")
+                        except OSError as e:
+                            log.warning(f"重命名防覆盖文件失败: {e}")
+                # --- 智能防覆盖递增逻辑 结束 ---
+
                 self.status_queue.put({'status': 'finished', 'filename': filename})
                 # For captions-only downloads, yt-dlp may still report a media-like
                 # filepath in MoveFiles. Capture subtitle outputs explicitly so the
