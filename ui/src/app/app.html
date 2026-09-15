@@ -124,7 +124,7 @@
               autocomplete="off"
               spellcheck="false"
               class="form-control form-control-lg"
-              placeholder="输入视频、频道或播放列表链接 (支持 YouTube / TikTok / IG / B站)"
+              placeholder="输入视频、频道或播放列表链接 (支持 YouTube / 抖音 / TikTok / IG / B站)"
               [(ngModel)]="addUrl"
               [ngModelOptions]="{standalone: true}"
               [disabled]="addInProgress || subscribeInProgress || downloads.loading">
@@ -139,7 +139,7 @@
               autocomplete="off"
               spellcheck="false"
               class="form-control form-control-lg"
-              placeholder="输入视频、频道或播放列表链接 (支持 YouTube / TikTok / IG / B站)"
+              placeholder="输入视频、频道或播放列表链接 (支持 YouTube / 抖音 / TikTok / IG / B站)"
               [(ngModel)]="addUrl"
               [ngModelOptions]="{standalone: true}"
               [disabled]="addInProgress || subscribeInProgress || downloads.loading">
@@ -809,11 +809,11 @@
                   }
                 </div>
                 <span ngbTooltip="{{buildResultItemTooltip(entry[1])}}">@if (!!entry[1].filename) {
-                  <a href="{{buildDownloadLink(entry[1])}}" target="_blank">{{ entry[1].title }}</a>
+                  <a href="{{buildDownloadLink(entry[1])}}" target="_blank">{{ fullTitle(entry[1]) }}</a>
                 } @else {
                   @if (entry[1].status === 'error') {
                     <button type="button" class="btn btn-link p-0 text-start align-baseline" (click)="toggleErrorDetail(entry[0])">
-                      {{entry[1].title}}
+                      {{fullTitle(entry[1])}}
                       @if (!isErrorExpanded(entry[0])) {
                         <small class="text-danger ms-2">
                           <fa-icon [icon]="faChevronRight" size="xs" class="me-1" />点击查看错误详情
@@ -821,7 +821,7 @@
                       }
                     </button>
                   } @else {
-                    <span>{{entry[1].title}}</span>
+                    <span>{{fullTitle(entry[1])}}</span>
                   }
                 }</span>
                 @if (entry[1].status === 'error' && isErrorExpanded(entry[0])) {

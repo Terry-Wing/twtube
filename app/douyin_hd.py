@@ -339,10 +339,18 @@ async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dic
 
         desc = (aweme.get('desc') or '').strip() or f'抖音视频_{aweme_id}'
         author = (aweme.get('author') or {}).get('nickname') or 'douyin_user'
+        create_time = aweme.get('create_time')
+        upload_date = ''
+        if create_time:
+            try:
+                upload_date = time.strftime('%Y-%m-%d', time.localtime(int(create_time)))
+            except Exception:
+                upload_date = ''
         return {
             'id': aweme_id,
             'title': desc,
             'author': author,
+            'upload_date': upload_date,
             'play_url': stream['url'],
             'width': stream['width'],
             'height': stream['height'],

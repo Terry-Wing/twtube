@@ -920,10 +920,19 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     if (u.includes('youtube.com') || u.includes('youtu.be')) return 'YouTube';
     if (u.includes('instagram.com') || u.includes('instagr.am')) return 'Instagram';
     if (u.includes('tiktok.com')) return 'TikTok';
+    if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return '抖音';
     if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'B站';
     if (u.includes('twitter.com') || u.includes('x.com')) return 'X/Twitter';
     if (u.includes('facebook.com') || u.includes('fb.watch')) return 'Facebook';
     return '网页';
+  }
+
+  fullTitle(download: Download): string {
+    const parts: string[] = [];
+    if (download.upload_date) parts.push(download.upload_date);
+    parts.push(download.title);
+    if (download.uploader) parts.push(download.uploader);
+    return parts.join(' - ');
   }
 
   downloadTypeLabel(download: Download): string {

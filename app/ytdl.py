@@ -69,6 +69,23 @@ def _detect_platform_subfolder(url: str) -> str:
     return 'default'
 
 
+def _entry_uploader(entry) -> str:
+    """从 yt-dlp 信息字典里取博主名（uploader，回退 channel/creator）。"""
+    if not isinstance(entry, dict):
+        return ''
+    return entry.get('uploader') or entry.get('channel') or entry.get('creator') or ''
+
+
+def _entry_upload_date(entry) -> str:
+    """从 yt-dlp 信息字典里取上传日期并格式化为 YYYY-MM-DD。"""
+    if not isinstance(entry, dict):
+        return ''
+    d = entry.get('upload_date')
+    if isinstance(d, str) and len(d) == 8 and d.isdigit():
+        return f'{d[:4]}-{d[4:6]}-{d[6:8]}'
+    return ''
+
+
 # Fragmented and live downloads can emit a warning per fragment, and the joined
 # text is persisted with the completed queue and broadcast to every client, so
 # only the last few distinct warnings are kept.
@@ -520,6 +537,8 @@ class DownloadInfo:
         live_status=None,
         live_release_timestamp=None,
         sponsorblock=False,
+        uploader="",
+        upload_date="",
     ):
         self.id = id if len(custom_name_prefix) == 0 else f'{custom_name_prefix}.{id}'
         self.title = title if len(custom_name_prefix) == 0 else f'{custom_name_prefix}.{title}'
@@ -549,6 +568,8 @@ class DownloadInfo:
         self.clip_end = clip_end
         self.live_status = live_status
         self.live_release_timestamp = live_release_timestamp
+        self.uploader = uploader
+        self.upload_date = upload_date
         self.subtitle_files = []
 
     # Fields that are useful server-side but must not be broadcast to browser
@@ -611,6 +632,10 @@ class DownloadInfo:
             self.split_by_chapters = False
         if not hasattr(self, "sponsorblock"):
             self.sponsorblock = False
+        if not hasattr(self, "uploader"):
+            self.uploader = ""
+        if not hasattr(self, "upload_date"):
+            self.upload_date = ""
         if not hasattr(self, "chapter_template"):
             self.chapter_template = ""
         if not hasattr(self, "subtitle_language"):
@@ -1990,6 +2015,8 @@ class DownloadQueue:
                 live_status=entry.get('live_status'),
                 live_release_timestamp=entry.get('release_timestamp'),
                 sponsorblock=sponsorblock,
+                uploader=_entry_uploader(entry),
+                upload_date=_entry_upload_date(entry),
             )
             await self.__add_download(dl, auto_start)
             return {'status': 'ok'}
@@ -2119,6 +2146,8 @@ class DownloadQueue:
             subtitle_mode=subtitle_mode,
             ytdl_options_presets=ytdl_options_presets,
             ytdl_options_overrides=ytdl_options_overrides,
+            uploader=detail.get('author') or '',
+            upload_date=detail.get('upload_date') or '',
         )
         dl.status = 'pending'
         await self.notifier.added(dl)

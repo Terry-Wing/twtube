@@ -33,4 +33,6 @@ export interface Download {
   error?: string;
   deleting?: boolean;
   chapter_files?: { filename: string, size: number }[];
+  uploader?: string;
+  upload_date?: string;
 }
