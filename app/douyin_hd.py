@@ -44,6 +44,13 @@ DEFAULT_UA = (
 )
 REFERER = 'https://www.douyin.com/'
 DETAIL_BASE = 'https://www.douyin.com/aweme/v1/web/aweme/detail/'
+# App 端 detail 接口：网页版接口自 2026-09-15 起被 ArgusSecurityPlugin 风控（403 Uifid
+# Not Found），改走 App 端（aid=6383）可拿到完整画质梯度（1080P/1440P/4K）。
+MOBILE_DETAIL_BASE = 'https://api.amemv.com/aweme/v1/aweme/detail/'
+_UA_MOBILE = (
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
+    'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+)
 
 # ---- 抖音 msToken 生成配置（来自 f2）----
 MSTOKEN_URL = 'https://mssdk.bytedance.com/web/r/token?ms_appid=6383&msToken=T4bNG9W2rKF7hBNwaYssDErnJEobDAk641DFaOn4hcsfAM8slpbZeKPM4Ml4rhDQq18iY8nQ0JR3J87SLZtDiDqtZdZawfBjCWAgtolQsoEtG6MLETvo4fwr7F28zGJUFDdJgKEZHibNR0QshVBv28ygsQsJDzerKAtsgj9Pn5WsxyS1vfkiX3I%3D'
@@ -222,9 +229,50 @@ def sign_detail(params_str: str, ua: str) -> str | None:
         return None
 
 
+async def fetch_aweme_detail_mobile(session: aiohttp.ClientSession, aweme_id: str,
+                                   cookies: dict) -> dict | None:
+    """用 App 端 detail 接口拉取 aweme JSON（无需 a_bogus 签名）。
+
+    2026-09-15 起抖音网页版接口被 ArgusSecurityPlugin 风控（403 Uifid Not Found），
+    改走 App 端接口（aid=6383）可绕过，并能拿到完整 bit_rate 画质梯度（含 1080P/1440P/4K）。
+    """
+    cookie_header = '; '.join(f'{k}={v}' for k, v in cookies.items() if v)
+    headers = {
+        'User-Agent': _UA_MOBILE,
+        'Referer': REFERER,
+        'Accept': 'application/json',
+        'Cookie': cookie_header,
+    }
+    params = {
+        'aweme_id': aweme_id,
+        'aid': '6383',           # 6383 才下发完整画质梯度
+        'version_code': '999',
+        'device_platform': 'iphone',
+        'channel': 'AppStore',
+    }
+    try:
+        async with session.get(MOBILE_DETAIL_BASE, params=params, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            data = await resp.json(content_type=None)
+    except Exception as e:
+        log.warning('拉取移动端 aweme detail 失败: %s', e)
+        return None
+    aweme = (data or {}).get('aweme_detail') or {}
+    if not aweme or not aweme.get('aweme_id'):
+        return None
+    return aweme
+
+
 async def fetch_aweme_detail(session: aiohttp.ClientSession, aweme_id: str,
                              cookies: dict, ms_token: str) -> dict | None:
-    """带签名拉取 aweme detail 原始 JSON。"""
+    """拉取 aweme detail 原始 JSON：优先 App 端接口，失败再回退网页签名接口。"""
+    aweme = await fetch_aweme_detail_mobile(session, aweme_id, cookies)
+    if aweme:
+        return aweme
+
+    # ---- 网页版接口（带 a_bogus/X-Bogus 签名）作为回退 ----
+    if not ms_token:
+        ms_token = await gen_ms_token(session)
     params_str = build_detail_params(aweme_id, ms_token)
     signed = sign_detail(params_str, _UA_CHROME)
     if not signed:
@@ -318,15 +366,15 @@ async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dic
             return None
 
         cookies = load_cookies_dict(cookies_path)
-        ms_token = cookies.get('msToken') or await gen_ms_token(session)
+        # 主路径是 App 端接口（不需要 msToken），所以这里不再无条件联网生成；
+        # 仅在网页版回退时才按需生成。
+        ms_token = cookies.get('msToken') or ''
         if not cookies.get('ttwid'):
             ttwid = await gen_ttwid(session)
             if ttwid:
                 cookies['ttwid'] = ttwid
         if not cookies.get('s_v_web_id'):
             cookies['s_v_web_id'] = gen_webid()
-        # 把 msToken 也并入 cookies，统一在 Cookie 头里携带（含登录态 sessionid/sid_guard 等）
-        cookies.setdefault('msToken', ms_token)
 
         aweme = await fetch_aweme_detail(session, aweme_id, cookies, ms_token)
         if not aweme:
@@ -343,7 +391,11 @@ async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dic
         upload_date = ''
         if create_time:
             try:
-                upload_date = time.strftime('%Y-%m-%d', time.localtime(int(create_time)))
+                # 固定按北京时间（UTC+8）换算：容器默认时区是 UTC，直接用
+                # localtime 会让北京时间凌晨发布的视频日期差一天。中国无夏令时，
+                # 直接 +8h 即可，且不依赖容器 TZ / tzdata。
+                upload_date = time.strftime(
+                    '%Y-%m-%d', time.gmtime(int(create_time) + 8 * 3600))
             except Exception:
                 upload_date = ''
         return {
