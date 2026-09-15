@@ -599,7 +599,7 @@ class Notifier(DownloadQueueNotifier):
         await sio.emit('completed', serializer.encode(dl))
         # 新增：TG 下载完成/失败通知（名称带 日期 - 标题 - 博主名）
         full_name = ' - '.join(
-            p for p in (getattr(dl, 'upload_date', ''), dl.title, getattr(dl, 'uploader', '')) if p
+            p for p in (getattr(dl, 'uploader', ''), getattr(dl, 'upload_date', ''), dl.title) if p
         ) or dl.title
         if dl.status == 'finished':
             await tg_bot_mgr.send_notification(f"✅ <b>下载已完成</b>\n📹 名称: <code>{full_name}</code>\n📁 路径: <code>{dl.folder or '默认'}</code>")

@@ -929,9 +929,9 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
 
   fullTitle(download: Download): string {
     const parts: string[] = [];
+    if (download.uploader) parts.push(download.uploader);
     if (download.upload_date) parts.push(download.upload_date);
     parts.push(download.title);
-    if (download.uploader) parts.push(download.uploader);
     return parts.join(' - ');
   }
 
