@@ -38,6 +38,16 @@ class TelegramBotManager:
             return 'bilibili'
         return 'default'
 
+    # 平台显示名（与 web 端 getPlatformName 保持一致）
+    PLATFORM_DISPLAY = {
+        'douyin': '抖音',
+        'tiktok': 'TikTok',
+        'instagram': 'Instagram',
+        'youtube': 'YouTube',
+        'bilibili': 'B站',
+        'default': '网页',
+    }
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
             return
@@ -66,7 +76,7 @@ class TelegramBotManager:
         target_folder = self._detect_platform_folder(extracted_url)
         await update.message.reply_text(
             f"📥 正在解析并加入队列...\n"
-            f"🌐 平台识别: <b>{target_folder.upper()}</b>\n"
+            f"🌐 平台识别: <b>{self.PLATFORM_DISPLAY.get(target_folder, '网页')}</b>\n"
             f"📁 保存目录: <code>{target_folder}</code>\n"
             f"🔗 链接: {extracted_url}",
             parse_mode="HTML"

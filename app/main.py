@@ -597,11 +597,14 @@ class Notifier(DownloadQueueNotifier):
     async def completed(self, dl):
         log.info(f"Notifier: Download completed - {dl.title}")
         await sio.emit('completed', serializer.encode(dl))
-        # 新增：TG 下载完成/失败通知
+        # 新增：TG 下载完成/失败通知（名称带 日期 - 标题 - 博主名）
+        full_name = ' - '.join(
+            p for p in (getattr(dl, 'upload_date', ''), dl.title, getattr(dl, 'uploader', '')) if p
+        ) or dl.title
         if dl.status == 'finished':
-            await tg_bot_mgr.send_notification(f"✅ <b>下载已完成</b>\n📹 名称: <code>{dl.title}</code>\n📁 路径: <code>{dl.folder or '默认'}</code>")
+            await tg_bot_mgr.send_notification(f"✅ <b>下载已完成</b>\n📹 名称: <code>{full_name}</code>\n📁 路径: <code>{dl.folder or '默认'}</code>")
         elif dl.status == 'error':
-            await tg_bot_mgr.send_notification(f"❌ <b>下载失败</b>\n📹 名称: <code>{dl.title}</code>\n⚠️ 原因: {dl.error or dl.msg}")
+            await tg_bot_mgr.send_notification(f"❌ <b>下载失败</b>\n📹 名称: <code>{full_name}</code>\n⚠️ 原因: {dl.error or dl.msg}")
 
     async def canceled(self, id):
         log.info(f"Notifier: Download canceled - {id}")

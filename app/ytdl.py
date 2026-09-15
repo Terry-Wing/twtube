@@ -2124,8 +2124,10 @@ class DownloadQueue:
 
         safe_title = douyin_hd._sanitize_filename(detail['title'])
         safe_author = douyin_hd._sanitize_filename(detail['author'])
+        upload_date = detail.get('upload_date') or ''
+        name_parts = [p for p in (upload_date, safe_title, safe_author) if p]
         dest_path = self.__douyin_unique_dest(
-            dldirectory, f'{safe_title} - {safe_author}.mp4')
+            dldirectory, ' - '.join(name_parts) + '.mp4')
 
         dl = DownloadInfo(
             id=detail['id'],
