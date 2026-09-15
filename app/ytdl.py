@@ -86,6 +86,58 @@ def _entry_upload_date(entry) -> str:
     return ''
 
 
+def _any_file_with_stem(directory: str, stem: str) -> bool:
+    """判断 directory 下是否已存在以 stem 开头（任意扩展名）的文件。"""
+    if not stem or not os.path.isdir(directory):
+        return False
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return False
+    for name in names:
+        if os.path.splitext(name)[0] == stem:
+            return True
+    return False
+
+
+def _reserve_unique_outtmpl(template: str, entry: dict | None, dldirectory: str) -> str:
+    """把输出模板解析成文件名主干，若目标目录已有同名文件则加 _1/_2/... 后缀，
+    返回新模板（只保留 %(ext)s 让 yt-dlp 下载时自行填充），从而彻底避免覆盖旧文件。
+
+    解析失败或无同名文件时原样返回模板。"""
+    if not isinstance(entry, dict) or not template:
+        return template
+    entry_copy = dict(entry)
+    entry_copy.setdefault('ext', 'mp4')  # 占位，让 %(ext)s 能解析出来以得到主干名
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            resolved = ydl.evaluate_outtmpl(template, entry_copy)
+    except Exception as exc:
+        log.warning('解析输出模板失败，跳过防覆盖重命名: %s', exc)
+        return template
+    if not resolved:
+        return template
+
+    dirname = os.path.dirname(resolved)
+    basename = os.path.basename(resolved)
+    stem, _ext = os.path.splitext(basename)
+    if not stem:
+        return template
+
+    target_dir = os.path.join(dldirectory, dirname) if dirname else dldirectory
+    if not _any_file_with_stem(target_dir, stem):
+        return template  # 无同名文件
+
+    counter = 1
+    while _any_file_with_stem(target_dir, f'{stem}_{counter}'):
+        counter += 1
+    unique_stem = f'{stem}_{counter}'
+
+    new_template = (os.path.join(dirname, unique_stem) if dirname else unique_stem) + '.%(ext)s'
+    log.info('检测到同名文件，新下载将命名为: %s', new_template)
+    return new_template
+
+
 # Fragmented and live downloads can emit a warning per fragment, and the joined
 # text is persisted with the completed queue and broadcast to every client, so
 # only the last few distinct warnings are kept.
@@ -861,32 +913,6 @@ class Download:
                     filename = os.path.join(finaldir, os.path.basename(filepath))
                 else:
                     filename = filepath
-
-                # --- 智能防覆盖递增逻辑 (_1, _2, _3...) 开始 ---
-                if os.path.exists(filename):
-                    dir_name, full_base = os.path.split(filename)
-                    stem, ext = os.path.splitext(full_base)
-
-                    # 检查目标文件夹下是否存在其它同名文件
-                    counter = 1
-                    new_filename = os.path.join(dir_name, f"{stem}_{counter}{ext}")
-                    while os.path.exists(new_filename):
-                        # 如果当前文件本身就是正在处理的文件（路径完全相同），则不循环
-                        if os.path.abspath(new_filename) == os.path.abspath(filename):
-                            break
-                        counter += 1
-                        new_filename = os.path.join(dir_name, f"{stem}_{counter}{ext}")
-
-                    # 如果生成的新文件名与当前文件不同，执行无损重命名
-                    if new_filename != filename and not os.path.exists(new_filename):
-                        try:
-                            os.rename(filename, new_filename)
-                            filename = new_filename
-                            d['info_dict']['filepath'] = new_filename
-                            log.info(f"检测到同名文件，已自动递增重命名为: {new_filename}")
-                        except OSError as e:
-                            log.warning(f"重命名防覆盖文件失败: {e}")
-                # --- 智能防覆盖递增逻辑 结束 ---
 
                 self.status_queue.put({'status': 'finished', 'filename': filename})
                 # For captions-only downloads, yt-dlp may still report a media-like
@@ -1743,6 +1769,8 @@ class DownloadQueue:
                 output = self.config.OUTPUT_TEMPLATE_CHANNEL
             sanitized = {k: _sanitize_path_component(v) for k, v in entry.items()}
             output = _resolve_outtmpl_fields(output, sanitized, ('channel',))
+        # 防覆盖：下载前预留唯一文件名（重名时自动加 _1/_2/...）
+        output = _reserve_unique_outtmpl(output, entry, dldirectory)
         ytdl_options = self._build_ytdl_options(
             getattr(dl, 'ytdl_options_presets', None),
             getattr(dl, 'ytdl_options_overrides', {}) or {},
