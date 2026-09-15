@@ -671,6 +671,8 @@ class DownloadInfo:
 _PERSISTED_DOWNLOAD_FIELDS = (
     "id",
     "title",
+    "uploader",
+    "upload_date",
     "url",
     "quality",
     "download_type",
