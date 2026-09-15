@@ -29,6 +29,7 @@ from state_store import AtomicJsonStore, from_json_compatible, read_legacy_shelf
 from subscriptions import _entry_id
 from url_guard import validate_url, install_socket_guard
 from urllib.parse import urlsplit
+import douyin_hd
 
 log = logging.getLogger('ytdl')
 
@@ -1372,6 +1373,8 @@ class DownloadQueue:
         self._scheduled_probe_failures: dict[str, int] = {}
         self._live_monitor_task: Optional[asyncio.Task] = None
         self._live_monitor_wakeup = asyncio.Event()
+        # 抖音直连下载的进行中任务，按 URL 索引，用于取消支持。
+        self._douyin_tasks: dict[str, asyncio.Task] = {}
 
     def cancel_add(self):
         self._add_generation += 1
@@ -2045,6 +2048,134 @@ class DownloadQueue:
         await self.done.put(download)
         await self.notifier.completed(info)
 
+    def __douyin_cookies_path(self):
+        """返回抖音可用 Cookie 文件路径（优先用户上传/配置的 cookiefile）。"""
+        cookiefile = self.config.YTDL_OPTIONS.get('cookiefile')
+        if isinstance(cookiefile, str) and os.path.exists(cookiefile):
+            return cookiefile
+        default = os.path.join(self.config.STATE_DIR, 'cookies.txt')
+        return default if os.path.exists(default) else None
+
+    @staticmethod
+    def __douyin_unique_dest(directory: str, filename: str) -> str:
+        """同名文件自动递增 _1, _2 防覆盖。"""
+        stem, ext = os.path.splitext(filename)
+        if not ext:
+            ext = '.mp4'
+        candidate = os.path.join(directory, filename)
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = os.path.join(directory, f'{stem}_{counter}{ext}')
+            counter += 1
+        return candidate
+
+    async def __try_douyin_direct(self, url, quality, folder, custom_name_prefix,
+                                  subtitle_language, subtitle_mode,
+                                  ytdl_options_presets, ytdl_options_overrides):
+        """尝试用抖音原生解析器（带签名）下载最高清直链。
+
+        成功：创建 DownloadInfo、通知 added、后台流式下载，返回 True。
+        失败：返回 False，由调用方降级到 yt-dlp 原生提取。
+        """
+        try:
+            detail = await douyin_hd.resolve_douyin_video(
+                url, cookies_path=self.__douyin_cookies_path())
+        except Exception as exc:
+            log.warning('抖音直连解析失败，降级 yt-dlp: %s', exc)
+            return False
+        if not detail or not detail.get('play_url'):
+            return False
+
+        log.info('锁定抖音最高清直链: %s (%dx%d, %s)',
+                 detail['title'], detail.get('width'), detail.get('height'),
+                 detail.get('gear'))
+
+        dldirectory, error_message = self.__calc_download_path('video', folder)
+        if error_message is not None:
+            log.warning('抖音下载目录解析失败，降级 yt-dlp: %s', error_message)
+            return False
+
+        safe_title = douyin_hd._sanitize_filename(detail['title'])
+        safe_author = douyin_hd._sanitize_filename(detail['author'])
+        dest_path = self.__douyin_unique_dest(
+            dldirectory, f'{safe_title} - {safe_author}.mp4')
+
+        dl = DownloadInfo(
+            id=detail['id'],
+            title=detail['title'],
+            url=url,
+            quality=quality or 'best',
+            download_type='video',
+            codec='auto',
+            format='mp4',
+            folder=folder,
+            custom_name_prefix=custom_name_prefix,
+            error=None,
+            entry=None,
+            playlist_item_limit=0,
+            split_by_chapters=False,
+            chapter_template=None,
+            subtitle_language=subtitle_language,
+            subtitle_mode=subtitle_mode,
+            ytdl_options_presets=ytdl_options_presets,
+            ytdl_options_overrides=ytdl_options_overrides,
+        )
+        dl.status = 'pending'
+        await self.notifier.added(dl)
+
+        task = bg_tasks.create_task(
+            self.__douyin_download_worker(dl, detail, dest_path),
+            name='douyin_download',
+        )
+        self._douyin_tasks[url] = task
+        return True
+
+    async def __douyin_download_worker(self, dl, detail, dest_path):
+        last_update = [0.0]
+
+        async def _progress(downloaded, total):
+            dl.size = total or None
+            if total:
+                dl.percent = round(downloaded * 100.0 / total, 1)
+            now = time.monotonic()
+            if now - last_update[0] >= 1.0:
+                last_update[0] = now
+                await self.notifier.updated(dl)
+
+        try:
+            await douyin_hd.download_stream(
+                detail, dest_path, progress_cb=_progress)
+            dl.status = 'finished'
+            dl.percent = 100
+            dl.filename = os.path.relpath(dest_path, self.config.DOWNLOAD_DIR)
+            dl.size = os.path.getsize(dest_path) if os.path.exists(dest_path) else 0
+            # 与常规下载一致：写入 completed 队列，保证重启后仍在、可进回收站删除。
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        except asyncio.CancelledError:
+            log.info('抖音下载已取消: %s', dl.title)
+            self.__douyin_cleanup_partial(dest_path)
+            await self.notifier.canceled(dl.url)
+        except Exception as exc:
+            log.error('抖音直连下载失败: %s', exc)
+            self.__douyin_cleanup_partial(dest_path)
+            dl.status = 'error'
+            dl.error = str(exc)
+            dl.msg = str(exc)
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        finally:
+            self._douyin_tasks.pop(dl.url, None)
+
+    @staticmethod
+    def __douyin_cleanup_partial(dest_path):
+        partial = dest_path + '.part'
+        if os.path.exists(partial):
+            try:
+                os.remove(partial)
+            except OSError:
+                pass
+
     async def add(
         self,
         url,
@@ -2105,6 +2236,15 @@ class DownloadQueue:
                 clip_start, clip_end, retry_entry,
             )
             return {'status': 'error', 'msg': url_error}
+        # 抖音高清直连：优先用带签名（a_bogus/X-Bogus）的原生解析器下载最高清直链，
+        # 失败则自动降级到 yt-dlp 原生提取（最多 720p）。
+        if download_type == 'video' and ('douyin.com' in url or 'iesdouyin.com' in url):
+            if await self.__try_douyin_direct(
+                url, quality, folder, custom_name_prefix,
+                subtitle_language, subtitle_mode,
+                ytdl_options_presets, ytdl_options_overrides,
+            ):
+                return {'status': 'ok'}
         try:
             entry = await asyncio.get_running_loop().run_in_executor(
                 None,
@@ -2254,6 +2394,11 @@ class DownloadQueue:
         for id in ids:
             # Track URL so playlist add loop won't re-queue it
             self._canceled_urls.add(id)
+            # 抖音直连下载：取消进行中的流式任务。
+            task = self._douyin_tasks.get(id)
+            if task is not None:
+                task.cancel()
+                continue
             if self.pending.exists(id):
                 await self.pending.delete(id)
                 await self.notifier.canceled(id)

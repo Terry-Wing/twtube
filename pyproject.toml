@@ -9,6 +9,7 @@ dependencies = [
     "yt-dlp[default,curl-cffi,deno]>=2026.8.19",
     "mutagen",
     "curl-cffi",
+    "gmssl==3.2.2",
     "watchfiles",
     "python-telegram-bot>=21.0,<22.0",
 ]
