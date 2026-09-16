@@ -14,7 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # 用 PAT（而非默认 GITHUB_TOKEN）拉取并推送：
+          # 使用 GITHUB_TOKEN 产生的 push 不会触发其它 workflow（GitHub 防递归规则），
+          # 会导致改完 pyproject.toml 后 docker-build.yml 不构建镜像。
+          # 换成 PAT 后，push 会正常触发 docker-build.yml。
+          # 需要在仓库 secrets 里配置 GH_PAT（fine-grained: Contents=Read and write）。
+          token: ${{ secrets.GH_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
