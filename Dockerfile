@@ -21,7 +21,7 @@ COPY pyproject.toml docker-entrypoint.sh ./
 RUN sed -i 's/\r$//g' docker-entrypoint.sh && \
     chmod +x docker-entrypoint.sh && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates \
       ffmpeg \
       unzip \
@@ -29,6 +29,7 @@ RUN sed -i 's/\r$//g' docker-entrypoint.sh && \
       coreutils \
       gosu \
       curl \
+      tzdata \
       tini \
       build-essential && \
     curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh && \
