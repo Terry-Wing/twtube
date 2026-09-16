@@ -30,6 +30,7 @@ from subscriptions import _entry_id
 from url_guard import validate_url, install_socket_guard
 from urllib.parse import urlsplit
 import douyin_hd
+import video_info
 
 log = logging.getLogger('ytdl')
 
@@ -825,12 +826,13 @@ class Download:
             cls.manager.shutdown()
             cls.manager = None
 
-    def __init__(self, download_dir, temp_dir, output_template, output_template_chapter, quality, format, ytdl_opts, info, allow_private=False):
+    def __init__(self, download_dir, temp_dir, output_template, output_template_chapter, quality, format, ytdl_opts, info, allow_private=False, tag_video_info=False):
         self.download_dir = download_dir
         self.temp_dir = temp_dir
         self.output_template = output_template
         self.output_template_chapter = output_template_chapter
         self.allow_private = allow_private
+        self.tag_video_info = tag_video_info
         self.info = info
         self.format = get_format(
             getattr(info, 'download_type', 'video'),
@@ -913,6 +915,15 @@ class Download:
                     filename = os.path.join(finaldir, os.path.basename(filepath))
                 else:
                     filename = filepath
+
+                # 合并/后处理到此结束，文件名已定型：用 ffprobe 读真实分辨率与帧率，
+                # 把 [2160x3840 60fps] 追加到扩展名前，并把新名字报给 UI——这样下载
+                # 链接、回收站删除拿到的都是最终文件名。分章切割会产出多个文件，
+                # 主文件名不能代表全部，跳过。
+                if (self.tag_video_info
+                        and getattr(self.info, 'download_type', '') == 'video'
+                        and not getattr(self.info, 'split_by_chapters', False)):
+                    filename = video_info.tag_video_file(filename)
 
                 self.status_queue.put({'status': 'finished', 'filename': filename})
                 # For captions-only downloads, yt-dlp may still report a media-like
@@ -1779,7 +1790,7 @@ class DownloadQueue:
         if playlist_item_limit > 0:
             log.info(f'playlist limit is set. Processing only first {playlist_item_limit} entries')
             ytdl_options['playlistend'] = playlist_item_limit
-        download = Download(dldirectory, self.config.TEMP_DIR, output, output_chapter, dl.quality, dl.format, ytdl_options, dl, allow_private=self.config.ALLOW_PRIVATE_ADDRESSES)
+        download = Download(dldirectory, self.config.TEMP_DIR, output, output_chapter, dl.quality, dl.format, ytdl_options, dl, allow_private=self.config.ALLOW_PRIVATE_ADDRESSES, tag_video_info=bool(getattr(self.config, 'FILENAME_VIDEO_INFO', True)))
         is_upcoming = (
             getattr(dl, 'live_status', None) == 'is_upcoming'
             or getattr(dl, 'status', None) == 'scheduled'
@@ -2206,6 +2217,10 @@ class DownloadQueue:
         try:
             await douyin_hd.download_stream(
                 detail, dest_path, progress_cb=_progress)
+            # 抖音直连下载的是现成的整段 mp4，同样把真实分辨率/帧率补进文件名
+            if getattr(self.config, 'FILENAME_VIDEO_INFO', True):
+                dest_path = await asyncio.get_running_loop().run_in_executor(
+                    None, video_info.tag_video_file, dest_path)
             dl.status = 'finished'
             dl.percent = 100
             dl.filename = os.path.relpath(dest_path, self.config.DOWNLOAD_DIR)

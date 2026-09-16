@@ -69,10 +69,15 @@ class Config:
         'URL_PREFIX': '',
         'PUBLIC_HOST_URL': 'download/',
         'PUBLIC_HOST_AUDIO_URL': 'audio_download/',
-        'OUTPUT_TEMPLATE': '%(title)s.%(ext)s',
+        # 默认命名：作者 - 日期 - 标题.ext；作者或日期缺失时自动省略对应片段，
+        # 不会留下 "NA"。分辨率/帧率标签由 video_info 在下载完成后追加。
+        'OUTPUT_TEMPLATE': '%(uploader,channel,creator&{} - |)s%(upload_date>%Y-%m-%d&{} - |)s%(title)s.%(ext)s',
         'OUTPUT_TEMPLATE_CHAPTER': '%(title)s - %(section_number)02d - %(section_title)s.%(ext)s',
         'OUTPUT_TEMPLATE_PLAYLIST': '%(playlist_title)s/%(title)s.%(ext)s',
         'OUTPUT_TEMPLATE_CHANNEL': '%(channel)s/%(title)s.%(ext)s',
+        # 下载完成后用 ffprobe 探测最终文件，把真实的分辨率/帧率写进文件名
+        # （如“作者 - 日期 - 标题 [2160x3840 60fps].mp4”）。默认开启，置 false 关闭。
+        'FILENAME_VIDEO_INFO': 'true',
         'DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT' : '0',
         'SUBSCRIPTION_DEFAULT_CHECK_INTERVAL': '60',
         'SUBSCRIPTION_SCAN_PLAYLIST_END': '50',
@@ -99,7 +104,7 @@ class Config:
         'YTDL_NIGHTLY_UPDATE_TIME': '',
     }
 
-    _BOOLEAN = ('DOWNLOAD_DIRS_INDEXABLE', 'CUSTOM_DIRS', 'CREATE_CUSTOM_DIRS', 'DELETE_FILE_ON_TRASHCAN', 'HTTPS', 'ENABLE_ACCESSLOG', 'ALLOW_YTDL_OPTIONS_OVERRIDES', 'ALLOW_PRIVATE_ADDRESSES')
+    _BOOLEAN = ('DOWNLOAD_DIRS_INDEXABLE', 'CUSTOM_DIRS', 'CREATE_CUSTOM_DIRS', 'DELETE_FILE_ON_TRASHCAN', 'HTTPS', 'ENABLE_ACCESSLOG', 'ALLOW_YTDL_OPTIONS_OVERRIDES', 'ALLOW_PRIVATE_ADDRESSES', 'FILENAME_VIDEO_INFO')
 
     def __init__(self):
         for k, v in self._DEFAULTS.items():
