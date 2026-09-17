@@ -2,6 +2,9 @@ import os
 import re
 import asyncio
 import logging
+
+import bg_tasks
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
@@ -131,15 +134,27 @@ class TelegramBotManager:
             return
 
         log.info("Starting Telegram Bot service...")
-        self.bot_app = ApplicationBuilder().token(self.token).build()
-        self.bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
         async def _run_bot():
-            async with self.bot_app:
-                await self.bot_app.start()
-                await self.bot_app.updater.start_polling()
-                log.info("Telegram Bot polling started successfully.")
-                while True:
-                    await asyncio.sleep(3600)
+            # 外层循环：轮询一旦崩溃（隔夜网络被 NAT/ISP 掐断、Telegram API
+            # 报错等）就自动重建并恢复，而不是静默死掉直到重启容器。
+            while True:
+                app = ApplicationBuilder().token(self.token).build()
+                app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
+                self.bot_app = app  # 保持引用，让 send_notification 用到的始终是当前实例
+                try:
+                    async with app:
+                        await app.start()
+                        await app.updater.start_polling()
+                        log.info("Telegram Bot polling started successfully.")
+                        while True:
+                            await asyncio.sleep(3600)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.exception("Telegram Bot polling crashed; restarting in 10s: %s", e)
+                    await asyncio.sleep(10)
 
-        asyncio.create_task(_run_bot())
+        # 用 bg_tasks.create_task 保持强引用并记录意外失败（裸 asyncio.create_task
+        # 只被事件循环弱引用，可能在运行中被 GC 回收导致轮询静默消失）。
+        self._bot_task = bg_tasks.create_task(_run_bot(), name="telegram_bot")
