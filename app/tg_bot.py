@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import contextlib
 import logging
 
 import bg_tasks
@@ -9,6 +10,12 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
 log = logging.getLogger('tg_bot')
+
+# 自愈/健康检查参数
+_HEALTH_INTERVAL = 60        # 每隔多少秒检查一次
+_HEALTH_TIMEOUT = 20         # 单次 Telegram API 探活超时（秒）
+_HEALTH_MAX_FAILURES = 3     # 连续探活失败多少次就整体重建
+_HEALTH_MAX_PENDING = 2      # 连续多少次发现「取不走的积压更新」就整体重建
 
 # 正则提取文本中的任何 http/https 链接
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
@@ -136,8 +143,15 @@ class TelegramBotManager:
         log.info("Starting Telegram Bot service...")
 
         async def _run_bot():
-            # 外层循环：轮询一旦崩溃（隔夜网络被 NAT/ISP 掐断、Telegram API
-            # 报错等）就自动重建并恢复，而不是静默死掉直到重启容器。
+            # 外层自愈循环。
+            # 背景：PTB 的轮询跑在它自己内部的 task 里
+            # （Updater.start_polling → network_retry_loop）。出站代理/长连接一旦
+            # 抖动，它可能就此不再取件，而外层 await 收不到任何异常。
+            # 2026-09-19 实测日志：代理 TLS 握手抛 NetworkError 之后，getUpdates
+            # 彻底消失、消息积压在 Telegram（pending_update_count=1），
+            # 表现为「机器人无声无息不再收消息，重启容器才好」。
+            # 所以不依赖异常，改成每 60s 主动做三项健康检查，任一项判定异常
+            # 就整体重建 Application（10s 后重试）。
             while True:
                 app = ApplicationBuilder().token(self.token).build()
                 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
@@ -146,14 +160,62 @@ class TelegramBotManager:
                     async with app:
                         await app.start()
                         await app.updater.start_polling()
-                        log.info("Telegram Bot polling started successfully.")
+                        log.info(
+                            "Telegram Bot polling started successfully (health check every %ds).",
+                            _HEALTH_INTERVAL,
+                        )
+                        probe_failures = 0
+                        pending_strikes = 0
                         while True:
-                            await asyncio.sleep(3600)
+                            await asyncio.sleep(_HEALTH_INTERVAL)
+                            # ① PTB 内部的轮询 task 是否还活着
+                            # （updater.running 可能是陈旧值，所以直接查 task 本身）
+                            polling_task = getattr(app.updater, "_Updater__polling_task", None)
+                            if polling_task is not None and polling_task.done():
+                                raise RuntimeError("updater polling task exited unexpectedly")
+                            if not app.updater.running:
+                                raise RuntimeError("updater stopped unexpectedly")
+                            # ② 到 Telegram 的 API 是否还通（顺带逼 httpx 重建坏掉的连接）
+                            try:
+                                await asyncio.wait_for(app.bot.get_me(), timeout=_HEALTH_TIMEOUT)
+                                probe_failures = 0
+                            except Exception as exc:
+                                probe_failures += 1
+                                log.warning(
+                                    "Telegram liveness probe failed (%d/%d): %s",
+                                    probe_failures, _HEALTH_MAX_FAILURES, exc,
+                                )
+                                if probe_failures >= _HEALTH_MAX_FAILURES:
+                                    raise RuntimeError("telegram API unreachable") from exc
+                                continue
+                            # ③ 最直接的信号：Telegram 上有没有「取不走的」积压更新。
+                            # 健康的轮询几秒内就会取走；连续多次仍有积压 = 轮询已哑。
+                            try:
+                                info = await asyncio.wait_for(
+                                    app.bot.get_webhook_info(), timeout=_HEALTH_TIMEOUT)
+                                pending = int(getattr(info, "pending_update_count", 0) or 0)
+                            except Exception as exc:
+                                log.debug("pending_update_count probe failed: %s", exc)
+                                pending = 0
+                            if pending > 0:
+                                pending_strikes += 1
+                                log.warning(
+                                    "Telegram has %d unfetched update(s) (%d/%d strikes).",
+                                    pending, pending_strikes, _HEALTH_MAX_PENDING,
+                                )
+                                if pending_strikes >= _HEALTH_MAX_PENDING:
+                                    raise RuntimeError(
+                                        f"{pending} update(s) pending but never fetched")
+                            else:
+                                pending_strikes = 0
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    log.exception("Telegram Bot polling crashed; restarting in 10s: %s", e)
-                    await asyncio.sleep(10)
+                    log.exception("Telegram Bot loop crashed; rebuilding in 10s: %s", e)
+                finally:
+                    with contextlib.suppress(Exception):
+                        self.bot_app = None
+                await asyncio.sleep(10)
 
         # 用 bg_tasks.create_task 保持强引用并记录意外失败（裸 asyncio.create_task
         # 只被事件循环弱引用，可能在运行中被 GC 回收导致轮询静默消失）。
