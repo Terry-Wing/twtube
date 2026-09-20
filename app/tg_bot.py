@@ -20,6 +20,8 @@ _HEALTH_MAX_PENDING = 2      # 连续多少次发现「取不走的积压更新�
 # 正则提取文本中的任何 http/https 链接
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
 
+import time
+
 class TelegramBotManager:
     def __init__(self, config, dqueue):
         self.config = config
@@ -27,6 +29,34 @@ class TelegramBotManager:
         self.token = os.environ.get('TG_BOT_TOKEN', '').strip()
         self.allowed_chat_id = os.environ.get('TG_CHAT_ID', '').strip()
         self.bot_app = None
+        # 记录 URL / 视频 ID 对应的 Telegram 消息上下文（用于下载完成后精准引用回复）
+        self._msg_contexts: dict[str, dict] = {}
+        self._max_msg_contexts = 500
+
+    def _record_msg_context(self, url: str, chat_id: str, message_id: int):
+        if not url:
+            return
+        if len(self._msg_contexts) >= self._max_msg_contexts:
+            # 超过容量上限时淘汰最早的一半记录
+            old_keys = list(self._msg_contexts.keys())[:len(self._msg_contexts) // 2]
+            for k in old_keys:
+                self._msg_contexts.pop(k, None)
+        ctx = {'chat_id': chat_id, 'message_id': message_id, 'time': time.time()}
+        self._msg_contexts[url] = ctx
+        clean_url = self._extract_url(url) or url
+        self._msg_contexts[clean_url] = ctx
+
+    def _get_and_pop_msg_context(self, url: str | None, dl_id: str | None = None) -> dict | None:
+        candidates = [c for c in (url, dl_id) if c]
+        for c in candidates:
+            if c in self._msg_contexts:
+                ctx = self._msg_contexts.pop(c)
+                # 清理关联的重复项
+                for k, v in list(self._msg_contexts.items()):
+                    if v.get('message_id') == ctx.get('message_id') and v.get('chat_id') == ctx.get('chat_id'):
+                        self._msg_contexts.pop(k, None)
+                return ctx
+        return None
 
     def _extract_url(self, text: str) -> str | None:
         if not text:
@@ -64,6 +94,7 @@ class TelegramBotManager:
 
         user_id = str(update.effective_user.id)
         chat_id = str(update.effective_chat.id)
+        message_id = update.message.message_id
 
         # 权限校验：如果配置了 TG_CHAT_ID，则仅允许指定用户使用
         if self.allowed_chat_id and chat_id != self.allowed_chat_id and user_id != self.allowed_chat_id:
@@ -82,6 +113,9 @@ class TelegramBotManager:
             m = re.search(r'modal_id=(\d+)', extracted_url)
             if m:
                 extracted_url = f"https://www.douyin.com/video/{m.group(1)}"
+
+        # 记录消息上下文，用于后续下载完成时精准引用回复原消息
+        self._record_msg_context(extracted_url, chat_id, message_id)
 
         target_folder = self._detect_platform_folder(extracted_url)
         await update.message.reply_text(
@@ -123,17 +157,45 @@ class TelegramBotManager:
             log.exception(f"Error handling TG download: {e}")
             await update.message.reply_text(f"❌ 系统处理异常: {str(e)}")
 
-    async def send_notification(self, text: str):
-        """用于下载完成后的回传通知"""
-        if self.bot_app and self.allowed_chat_id:
-            try:
-                await self.bot_app.bot.send_message(
-                    chat_id=self.allowed_chat_id,
-                    text=text,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                log.warning(f"Failed to send TG notification: {e}")
+    async def send_notification(self, text: str, dl=None):
+        """用于下载完成后的回传通知，支持引用触发下载的原消息"""
+        if not self.bot_app:
+            return
+
+        chat_id = self.allowed_chat_id
+        reply_to_message_id = None
+
+        if dl:
+            url = getattr(dl, 'url', None)
+            dl_id = getattr(dl, 'id', None)
+            ctx = self._get_and_pop_msg_context(url, dl_id)
+            if ctx:
+                chat_id = ctx.get('chat_id') or chat_id
+                reply_to_message_id = ctx.get('message_id')
+
+        if not chat_id:
+            return
+
+        try:
+            if reply_to_message_id:
+                try:
+                    await self.bot_app.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode="HTML",
+                        reply_to_message_id=reply_to_message_id,
+                    )
+                    return
+                except Exception as exc:
+                    log.warning(f"Failed to reply to message {reply_to_message_id} (message may be deleted): {exc}, sending without reply")
+
+            await self.bot_app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            log.warning(f"Failed to send TG notification: {e}")
 
     def start(self):
         if not self.token:

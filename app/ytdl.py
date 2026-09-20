@@ -1085,7 +1085,17 @@ class Download:
         self.info.status = 'preparing'
         await self.notifier.updated(self.info)
         self.status_task = asyncio.create_task(self.update_status())
-        await self.loop.run_in_executor(self._executor, self.proc.join)
+        timeout = float(os.environ.get('DOWNLOAD_TIMEOUT', '3600'))
+        try:
+            await asyncio.wait_for(
+                self.loop.run_in_executor(self._executor, self.proc.join),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            log.error(f"Download timed out after {timeout}s: {self.info.title}")
+            self.cancel()
+            if self.status_queue is not None:
+                self.status_queue.put({'status': 'error', 'msg': f'下载处理超时 (已超过 {int(timeout)} 秒)'})
         # Signal update_status to stop and wait for it to finish
         # so that all status updates (including MoveFiles with correct
         # file size) are processed before _post_download_cleanup runs.
@@ -2137,10 +2147,20 @@ class DownloadQueue:
             counter += 1
         return candidate
 
+    @staticmethod
+    def __douyin_unique_dest_dir(directory: str, folder_name: str) -> str:
+        """同名图集文件夹自动递增 _1, _2 防覆盖。"""
+        candidate = os.path.join(directory, folder_name)
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = os.path.join(directory, f'{folder_name}_{counter}')
+            counter += 1
+        return candidate
+
     async def __try_douyin_direct(self, url, quality, folder, custom_name_prefix,
                                   subtitle_language, subtitle_mode,
                                   ytdl_options_presets, ytdl_options_overrides):
-        """尝试用抖音原生解析器（带签名）下载最高清直链。
+        """尝试用抖音原生解析器（带签名）下载最高清直链或图集。
 
         成功：创建 DownloadInfo、通知 added、后台流式下载，返回 True。
         失败：返回 False，由调用方降级到 yt-dlp 原生提取。
@@ -2151,12 +2171,20 @@ class DownloadQueue:
         except Exception as exc:
             log.warning('抖音直连解析失败，降级 yt-dlp: %s', exc)
             return False
-        if not detail or not detail.get('play_url'):
+        if not detail:
             return False
 
-        log.info('锁定抖音最高清直链: %s (%dx%d, %s)',
-                 detail['title'], detail.get('width'), detail.get('height'),
-                 detail.get('gear'))
+        is_images = detail.get('type') == 'images'
+        if not is_images and not detail.get('play_url'):
+            return False
+
+        if is_images:
+            log.info('锁定抖音图集: %s (共 %d 张图片)',
+                     detail['title'], len(detail.get('images') or []))
+        else:
+            log.info('锁定抖音最高清直链: %s (%dx%d, %s)',
+                     detail['title'], detail.get('width'), detail.get('height'),
+                     detail.get('gear'))
 
         dldirectory, error_message = self.__calc_download_path('video', folder)
         if error_message is not None:
@@ -2167,6 +2195,42 @@ class DownloadQueue:
         safe_author = douyin_hd._sanitize_filename(detail['author'])
         upload_date = detail.get('upload_date') or ''
         name_parts = [p for p in (safe_author, upload_date, safe_title) if p]
+
+        if is_images:
+            dest_dir = self.__douyin_unique_dest_dir(
+                dldirectory, ' - '.join(name_parts))
+            dl = DownloadInfo(
+                id=detail['id'],
+                title=detail['title'],
+                url=url,
+                quality='best',
+                download_type='images',
+                codec='auto',
+                format='jpeg',
+                folder=folder,
+                custom_name_prefix=custom_name_prefix,
+                error=None,
+                entry=None,
+                playlist_item_limit=0,
+                split_by_chapters=False,
+                chapter_template=None,
+                subtitle_language=subtitle_language,
+                subtitle_mode=subtitle_mode,
+                ytdl_options_presets=ytdl_options_presets,
+                ytdl_options_overrides=ytdl_options_overrides,
+                uploader=detail.get('author') or '',
+                upload_date=detail.get('upload_date') or '',
+            )
+            dl.status = 'pending'
+            await self.notifier.added(dl)
+
+            task = bg_tasks.create_task(
+                self.__douyin_images_download_worker(dl, detail, dest_dir),
+                name='douyin_images_download',
+            )
+            self._douyin_tasks[url] = task
+            return True
+
         dest_path = self.__douyin_unique_dest(
             dldirectory, ' - '.join(name_parts) + '.mp4')
 
@@ -2201,6 +2265,41 @@ class DownloadQueue:
         )
         self._douyin_tasks[url] = task
         return True
+
+    async def __douyin_images_download_worker(self, dl, detail, dest_dir):
+        async def _progress(completed, total):
+            dl.status = 'downloading'
+            dl.percent = round((completed / total) * 100.0, 1) if total else 0
+            dl.msg = f'已下载 {completed}/{total} 项'
+            await self.notifier.updated(dl)
+
+        try:
+            dl.status = 'downloading'
+            await self.notifier.updated(dl)
+            saved = await douyin_hd.download_images(
+                detail, dest_dir, progress_cb=_progress,
+                is_canceled=lambda: dl.url not in self._douyin_tasks,
+            )
+            if not saved:
+                raise RuntimeError('图集下载失败，未能保存任何图片')
+            dl.status = 'finished'
+            dl.percent = 100
+            dl.filename = os.path.relpath(dest_dir, self.config.DOWNLOAD_DIR)
+            dl.msg = f'图集下载完成，共 {len(saved)} 个文件'
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        except asyncio.CancelledError:
+            log.info('抖音图集下载已取消: %s', dl.title)
+            await self.notifier.canceled(dl.url)
+        except Exception as exc:
+            log.error('抖音图集下载失败: %s', exc)
+            dl.status = 'error'
+            dl.error = str(exc)
+            dl.msg = str(exc)
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        finally:
+            self._douyin_tasks.pop(dl.url, None)
 
     async def __douyin_download_worker(self, dl, detail, dest_path):
         last_update = [0.0]

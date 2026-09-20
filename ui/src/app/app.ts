@@ -7,7 +7,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FontAwesomeModule } from '@fortawesome/angular-fontawesome';
 import { NgbModule, NgbTypeahead } from '@ng-bootstrap/ng-bootstrap';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { faTrashAlt, faCheckCircle, faTimesCircle, faRedoAlt, faSun, faMoon, faCheck, faCircleHalfStroke, faDownload, faExternalLinkAlt, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faSortAmountDown, faSortAmountUp, faChevronRight, faChevronDown, faUpload, faPause, faPlay, faShareNodes } from '@fortawesome/free-solid-svg-icons';
+import { faTrashAlt, faCheckCircle, faTimesCircle, faRedoAlt, faSun, faMoon, faCheck, faCircleHalfStroke, faDownload, faExternalLinkAlt, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faSortAmountDown, faSortAmountUp, faChevronRight, faChevronDown, faUpload, faPause, faPlay, faShareNodes, faSearch, faFilter } from '@fortawesome/free-solid-svg-icons';
 import { faGithub } from '@fortawesome/free-brands-svg-icons';
 import { CookieService } from 'ngx-cookie-service';
 import { AddDownloadPayload, DownloadsService } from './services/downloads.service';
@@ -144,6 +144,23 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   expandedErrors: Set<string> = new Set<string>();
   cachedSortedDone: [string, Download][] = [];
   cachedSortedDoneIds: string[] = [];
+  // 已完成列表过滤与分页
+  donePlatformFilter = 'all';
+  doneSearchQuery = '';
+  donePageSize = 20;
+  doneCurrentPage = 1;
+  cachedFilteredSortedDone: [string, Download][] = [];
+  cachedPagedSortedDone: [string, Download][] = [];
+  cachedPagedSortedDoneIds: string[] = [];
+  donePlatformCounts: Record<string, number> = {
+    all: 0,
+    douyin: 0,
+    youtube: 0,
+    bilibili: 0,
+    tiktok: 0,
+    instagram: 0,
+    other: 0,
+  };
   lastCopiedErrorId: string | null = null;
   private previousDownloadType = 'video';
   private addRequestSub?: Subscription;
@@ -205,6 +222,8 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   faPause = faPause;
   faPlay = faPlay;
   faShareNodes = faShareNodes;
+  faSearch = faSearch;
+  faFilter = faFilter;
 
   subtitleLanguages = [
     { id: 'zh-Hans', text: '中文 (简体)' },
@@ -1547,6 +1566,121 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.cookieService.set('metube_subscriptions_collapsed', this.subscriptionsCollapsed ? 'true' : 'false', { expires: this.settingsCookieExpiryDays });
   }
 
+  getPlatformKey(url: string | undefined): string {
+    if (!url) return 'other';
+    const u = url.toLowerCase();
+    if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'douyin';
+    if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
+    if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'bilibili';
+    if (u.includes('tiktok.com')) return 'tiktok';
+    if (u.includes('instagram.com') || u.includes('instagr.am')) return 'instagram';
+    return 'other';
+  }
+
+  setDonePlatformFilter(platform: string) {
+    this.donePlatformFilter = platform;
+    this.doneCurrentPage = 1;
+    this.rebuildFilteredAndPagedDone();
+    this.cdr.markForCheck();
+  }
+
+  onDoneSearchChange() {
+    this.doneCurrentPage = 1;
+    this.rebuildFilteredAndPagedDone();
+    this.cdr.markForCheck();
+  }
+
+  clearDoneSearch() {
+    this.doneSearchQuery = '';
+    this.onDoneSearchChange();
+  }
+
+  setDonePage(page: number) {
+    if (page < 1 || page > this.totalDonePages) return;
+    this.doneCurrentPage = page;
+    this.rebuildFilteredAndPagedDone();
+    this.cdr.markForCheck();
+  }
+
+  setDonePageSize(size: unknown) {
+    this.donePageSize = Number(size);
+    this.doneCurrentPage = 1;
+    this.rebuildFilteredAndPagedDone();
+    this.cdr.markForCheck();
+  }
+
+  get totalDonePages(): number {
+    if (this.donePageSize <= 0 || this.cachedFilteredSortedDone.length === 0) {
+      return 1;
+    }
+    return Math.ceil(this.cachedFilteredSortedDone.length / this.donePageSize);
+  }
+
+  get donePageRange(): number[] {
+    const total = this.totalDonePages;
+    const current = this.doneCurrentPage;
+    const range: number[] = [];
+    const delta = 2;
+    for (let i = Math.max(1, current - delta); i <= Math.min(total, current + delta); i++) {
+      range.push(i);
+    }
+    return range;
+  }
+
+  rebuildFilteredAndPagedDone() {
+    const counts: Record<string, number> = {
+      all: this.cachedSortedDone.length,
+      douyin: 0,
+      youtube: 0,
+      bilibili: 0,
+      tiktok: 0,
+      instagram: 0,
+      other: 0,
+    };
+    for (const [, dl] of this.cachedSortedDone) {
+      const key = this.getPlatformKey(dl.url);
+      if (counts[key] !== undefined) {
+        counts[key]++;
+      } else {
+        counts.other++;
+      }
+    }
+    this.donePlatformCounts = counts;
+
+    let filtered = this.cachedSortedDone;
+    if (this.donePlatformFilter !== 'all') {
+      filtered = filtered.filter(([, dl]) => this.getPlatformKey(dl.url) === this.donePlatformFilter);
+    }
+
+    const q = (this.doneSearchQuery || '').trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter(([, dl]) => {
+        const title = (dl.title || '').toLowerCase();
+        const uploader = (dl.uploader || '').toLowerCase();
+        const filename = (dl.filename || '').toLowerCase();
+        return title.includes(q) || uploader.includes(q) || filename.includes(q);
+      });
+    }
+
+    this.cachedFilteredSortedDone = filtered;
+
+    const totalPages = this.totalDonePages;
+    if (this.doneCurrentPage > totalPages && totalPages > 0) {
+      this.doneCurrentPage = totalPages;
+    } else if (this.doneCurrentPage < 1) {
+      this.doneCurrentPage = 1;
+    }
+
+    if (this.donePageSize <= 0) {
+      this.cachedPagedSortedDone = filtered;
+    } else {
+      const start = (this.doneCurrentPage - 1) * this.donePageSize;
+      const end = start + this.donePageSize;
+      this.cachedPagedSortedDone = filtered.slice(start, end);
+    }
+    this.cachedPagedSortedDoneIds = this.cachedPagedSortedDone.map(([key]) => key);
+  }
+
   private rebuildSortedDone() {
     const result: [string, Download][] = [];
     this.downloads.done.forEach((dl, key) => {
@@ -1557,6 +1691,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }
     this.cachedSortedDone = result;
     this.cachedSortedDoneIds = result.map(([key]) => key);
+    this.rebuildFilteredAndPagedDone();
   }
 
   toggleErrorDetail(id: string) {

@@ -763,20 +763,58 @@
     </button>
   </div>
   @if (!completedCollapsed) {
-    <div class="px-2 py-3 border-bottom">
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" (click)="toggleSortOrder()" ngbTooltip="{{ sortAscending ? '最早优先' : '最新优先' }}"><fa-icon [icon]="sortAscending ? faSortAmountUp : faSortAmountDown" />&nbsp; {{ sortAscending ? '最早优先' : '最新优先' }}</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDelSelected (click)="delSelectedDownloads('done')"><fa-icon [icon]="faTrashAlt" />&nbsp; 清除选中记录</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasCompletedDone" (click)="clearCompletedDownloads()"><fa-icon [icon]="faCheckCircle" />&nbsp; 清空所有已完成</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="clearFailedDownloads()"><fa-icon [icon]="faTimesCircle" />&nbsp; 清空所有失败</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="retryFailedDownloads()"><fa-icon [icon]="faRedoAlt" />&nbsp; 重试失败任务</button>
-      <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDownloadSelected (click)="downloadSelectedFiles()"><fa-icon [icon]="faDownload" />&nbsp; 保存选中文件到本地</button>
+    <div class="px-2 py-3 border-bottom d-flex flex-column gap-3">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" (click)="toggleSortOrder()" ngbTooltip="{{ sortAscending ? '最早优先' : '最新优先' }}"><fa-icon [icon]="sortAscending ? faSortAmountUp : faSortAmountDown" />&nbsp; {{ sortAscending ? '最早优先' : '最新优先' }}</button>
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDelSelected (click)="delSelectedDownloads('done')"><fa-icon [icon]="faTrashAlt" />&nbsp; 清除选中记录</button>
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasCompletedDone" (click)="clearCompletedDownloads()"><fa-icon [icon]="faCheckCircle" />&nbsp; 清空所有已完成</button>
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="clearFailedDownloads()"><fa-icon [icon]="faTimesCircle" />&nbsp; 清空所有失败</button>
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="retryFailedDownloads()"><fa-icon [icon]="faRedoAlt" />&nbsp; 重试失败任务</button>
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDownloadSelected (click)="downloadSelectedFiles()"><fa-icon [icon]="faDownload" />&nbsp; 保存选中文件到本地</button>
+      </div>
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <!-- 平台筛选 -->
+        <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="平台筛选">
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'all'" [class.btn-outline-secondary]="donePlatformFilter !== 'all'" (click)="setDonePlatformFilter('all')">
+            全部 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.all }}</span>
+          </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'douyin'" [class.btn-outline-secondary]="donePlatformFilter !== 'douyin'" (click)="setDonePlatformFilter('douyin')">
+            抖音 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.douyin }}</span>
+          </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'youtube'" [class.btn-outline-secondary]="donePlatformFilter !== 'youtube'" (click)="setDonePlatformFilter('youtube')">
+            YouTube <span class="badge bg-secondary ms-1">{{ donePlatformCounts.youtube }}</span>
+          </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'bilibili'" [class.btn-outline-secondary]="donePlatformFilter !== 'bilibili'" (click)="setDonePlatformFilter('bilibili')">
+            B站 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.bilibili }}</span>
+          </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'tiktok'" [class.btn-outline-secondary]="donePlatformFilter !== 'tiktok'" (click)="setDonePlatformFilter('tiktok')">
+            TikTok <span class="badge bg-secondary ms-1">{{ donePlatformCounts.tiktok }}</span>
+          </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'instagram'" [class.btn-outline-secondary]="donePlatformFilter !== 'instagram'" (click)="setDonePlatformFilter('instagram')">
+            Instagram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.instagram }}</span>
+          </button>
+          @if (donePlatformCounts.other > 0) {
+            <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'other'" [class.btn-outline-secondary]="donePlatformFilter !== 'other'" (click)="setDonePlatformFilter('other')">
+              其他 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.other }}</span>
+            </button>
+          }
+        </div>
+        <!-- 搜索框 -->
+        <div class="input-group input-group-sm" style="max-width: 320px;">
+          <span class="input-group-text"><fa-icon [icon]="faSearch" /></span>
+          <input type="text" class="form-control" placeholder="搜索标题 / 博主 / 文件名..." [(ngModel)]="doneSearchQuery" (ngModelChange)="onDoneSearchChange()" />
+          @if (doneSearchQuery) {
+            <button class="btn btn-outline-secondary" type="button" (click)="clearDoneSearch()"><fa-icon [icon]="faTimesCircle" /></button>
+          }
+        </div>
+      </div>
     </div>
     <div class="overflow-auto">
       <table class="table">
         <thead>
           <tr>
             <th scope="col" style="width: 1rem;">
-              <app-select-all-checkbox #doneMasterCheckboxRef [id]="'done'" [list]="downloads.done" [orderedIds]="cachedSortedDoneIds" (changed)="doneSelectionChanged($event)" />
+              <app-select-all-checkbox #doneMasterCheckboxRef [id]="'done'" [list]="downloads.done" [orderedIds]="cachedPagedSortedDoneIds" (changed)="doneSelectionChanged($event)" />
             </th>
             <th scope="col">视频名称</th>
             <th scope="col" class="text-nowrap">平台</th>
@@ -789,7 +827,7 @@
           </tr>
         </thead>
         <tbody>
-          @for (entry of cachedSortedDone; track entry[0]) {
+          @for (entry of cachedPagedSortedDone; track entry[0]) {
             <tr [class.disabled]='entry[1].deleting'>
               <td>
                 <app-item-checkbox [id]="entry[0]" [master]="doneMasterCheckboxRef" [checkable]="entry[1]" />
@@ -920,6 +958,49 @@
       }
         </tbody>
       </table>
+    </div>
+
+    <!-- 分页控制栏 -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center px-2 py-3 border-top gap-2">
+      <div class="text-muted small">
+        显示 {{ cachedFilteredSortedDone.length === 0 ? 0 : (doneCurrentPage - 1) * (donePageSize <= 0 ? cachedFilteredSortedDone.length : donePageSize) + 1 }} - {{ donePageSize <= 0 ? cachedFilteredSortedDone.length : (doneCurrentPage * donePageSize > cachedFilteredSortedDone.length ? cachedFilteredSortedDone.length : doneCurrentPage * donePageSize) }} 条，共 {{ cachedFilteredSortedDone.length }} 条
+        @if (cachedFilteredSortedDone.length !== cachedSortedDone.length) {
+          <span> (从 {{ cachedSortedDone.length }} 条中过滤)</span>
+        }
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <div class="input-group input-group-sm" style="width: auto;">
+          <span class="input-group-text">每页</span>
+          <select class="form-select form-select-sm" [ngModel]="donePageSize" (ngModelChange)="setDonePageSize($event)" style="width: auto;">
+            <option [ngValue]="10">10 条</option>
+            <option [ngValue]="20">20 条</option>
+            <option [ngValue]="50">50 条</option>
+            <option [ngValue]="100">100 条</option>
+            <option [ngValue]="0">全部</option>
+          </select>
+        </div>
+        @if (totalDonePages > 1) {
+          <ul class="pagination pagination-sm mb-0">
+            <li class="page-item" [class.disabled]="doneCurrentPage <= 1">
+              <button class="page-link" type="button" (click)="setDonePage(1)" aria-label="首页">«</button>
+            </li>
+            <li class="page-item" [class.disabled]="doneCurrentPage <= 1">
+              <button class="page-link" type="button" (click)="setDonePage(doneCurrentPage - 1)" aria-label="上一页">‹</button>
+            </li>
+            @for (p of donePageRange; track p) {
+              <li class="page-item" [class.active]="p === doneCurrentPage">
+                <button class="page-link" type="button" (click)="setDonePage(p)">{{ p }}</button>
+              </li>
+            }
+            <li class="page-item" [class.disabled]="doneCurrentPage >= totalDonePages">
+              <button class="page-link" type="button" (click)="setDonePage(doneCurrentPage + 1)" aria-label="下一页">›</button>
+            </li>
+            <li class="page-item" [class.disabled]="doneCurrentPage >= totalDonePages">
+              <button class="page-link" type="button" (click)="setDonePage(totalDonePages)" aria-label="末页">»</button>
+            </li>
+          </ul>
+        }
+      </div>
     </div>
   }
 

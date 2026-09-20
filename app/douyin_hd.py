@@ -347,13 +347,34 @@ def extract_best_stream(aweme: dict) -> dict | None:
     return best
 
 
+def extract_images(aweme: dict) -> list[str]:
+    """从 aweme 字典提取无水印图集原图链接列表。"""
+    images = aweme.get('images') or []
+    image_urls = []
+    for img in images:
+        if not isinstance(img, dict):
+            continue
+        urls = img.get('download_url_list') or img.get('url_list') or []
+        if urls:
+            image_urls.append(urls[0])
+    return image_urls
+
+
+def extract_music(aweme: dict) -> str | None:
+    """提取图集或视频的背景音乐链接。"""
+    music = aweme.get('music') or {}
+    play_url = music.get('play_url') or {}
+    urls = play_url.get('url_list') or []
+    return urls[0] if urls else None
+
+
 def _sanitize_filename(name: str) -> str:
     name = re.sub(r'[\\/:*?"<>|\r\n\t]+', '_', name).strip()
     return name[:180] or 'douyin'
 
 
 async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dict | None:
-    """解析抖音视频，返回最高清直链元数据；失败返回 None。"""
+    """解析抖音视频或图集，返回最高清直链元数据；失败返回 None。"""
     timeout = aiohttp.ClientTimeout(total=30)
     conn = aiohttp.TCPConnector(limit=8)
     async with aiohttp.ClientSession(headers={'User-Agent': DEFAULT_UA, 'Referer': REFERER},
@@ -381,8 +402,9 @@ async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dic
             return None
 
         stream = extract_best_stream(aweme)
-        if not stream:
-            log.warning('未能从抖音返回数据中解析到视频流: %s', aweme_id)
+        images = extract_images(aweme)
+        if not stream and not images:
+            log.warning('未能从抖音返回数据中解析到视频流或图集: %s', aweme_id)
             return None
 
         desc = (aweme.get('desc') or '').strip() or f'抖音视频_{aweme_id}'
@@ -398,8 +420,23 @@ async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dic
                     '%Y-%m-%d', time.gmtime(int(create_time) + 8 * 3600))
             except Exception:
                 upload_date = ''
+
+        if images and not stream:
+            music_url = extract_music(aweme)
+            return {
+                'id': aweme_id,
+                'type': 'images',
+                'title': desc,
+                'author': author,
+                'upload_date': upload_date,
+                'images': images,
+                'music_url': music_url,
+                'cookies': cookies,
+            }
+
         return {
             'id': aweme_id,
+            'type': 'video',
             'title': desc,
             'author': author,
             'upload_date': upload_date,
@@ -414,26 +451,108 @@ async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dic
 
 async def download_stream(detail: dict, dest_path: str,
                           progress_cb=None, is_canceled=None) -> str:
-    """把直链流式下载到 dest_path，回调 progress_cb(downloaded, total)。"""
+    """把直链流式下载到 dest_path，支持 HTTP Range 断点续传与线程池异步写盘。"""
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp_path = dest_path + '.part'
     headers = {'User-Agent': DEFAULT_UA, 'Referer': REFERER}
-    total = detail.get('filesize') or 0
+
+    existing_bytes = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+    if existing_bytes > 0:
+        headers['Range'] = f'bytes={existing_bytes}-'
+        log.info('发现未完成下载，尝试断点续传: %s (已下载 %d 字节)', os.path.basename(dest_path), existing_bytes)
 
     async with aiohttp.ClientSession(headers=headers,
-                                     timeout=aiohttp.ClientTimeout(total=600)) as session:
+                                     timeout=aiohttp.ClientTimeout(total=1800)) as session:
         async with session.get(detail['play_url']) as resp:
-            if resp.status != 200:
+            if resp.status not in (200, 206):
                 raise RuntimeError(f'下载直链失败，HTTP 状态码: {resp.status}')
-            total = total or int(resp.headers.get('Content-Length') or 0)
-            downloaded = 0
-            with open(tmp_path, 'wb') as f:
+
+            if resp.status == 206:
+                mode = 'ab'
+                downloaded = existing_bytes
+                content_len = int(resp.headers.get('Content-Length') or 0)
+                total = existing_bytes + content_len
+            else:
+                mode = 'wb'
+                downloaded = 0
+                total = int(resp.headers.get('Content-Length') or detail.get('filesize') or 0)
+
+            with open(tmp_path, mode) as f:
+                buf = bytearray()
+                buf_limit = 256 * 1024  # 256KB 批量写盘，避免阻塞事件循环
                 async for chunk in resp.content.iter_chunked(64 * 1024):
                     if is_canceled and is_canceled():
                         raise asyncio.CancelledError()
-                    f.write(chunk)
+                    buf.extend(chunk)
                     downloaded += len(chunk)
+                    if len(buf) >= buf_limit:
+                        to_write = bytes(buf)
+                        buf.clear()
+                        await asyncio.to_thread(f.write, to_write)
                     if progress_cb:
                         await progress_cb(downloaded, total)
+                if buf:
+                    await asyncio.to_thread(f.write, bytes(buf))
+                    buf.clear()
+                await asyncio.to_thread(f.flush)
+
     os.replace(tmp_path, dest_path)
     return dest_path
+
+
+async def download_images(detail: dict, dest_dir: str,
+                          progress_cb=None, is_canceled=None) -> list[str]:
+    """批量下载抖音图集和背景音乐到 dest_dir，返回保存的文件列表。"""
+    os.makedirs(dest_dir, exist_ok=True)
+    headers = {'User-Agent': DEFAULT_UA, 'Referer': REFERER}
+    saved_files = []
+    images = detail.get('images') or []
+    total_items = len(images) + (1 if detail.get('music_url') else 0)
+    completed_items = 0
+
+    async with aiohttp.ClientSession(headers=headers,
+                                     timeout=aiohttp.ClientTimeout(total=600)) as session:
+        for idx, img_url in enumerate(images, start=1):
+            if is_canceled and is_canceled():
+                raise asyncio.CancelledError()
+            ext = '.jpeg'
+            if '.webp' in img_url.lower():
+                ext = '.webp'
+            elif '.png' in img_url.lower():
+                ext = '.png'
+            img_name = f'{idx:02d}{ext}'
+            img_path = os.path.join(dest_dir, img_name)
+            tmp_path = img_path + '.part'
+            try:
+                async with session.get(img_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await asyncio.to_thread(lambda: open(tmp_path, 'wb').write(data))
+                        os.replace(tmp_path, img_path)
+                        saved_files.append(img_path)
+            except Exception as e:
+                log.warning('下载图片 %s 失败: %s', img_url, e)
+            completed_items += 1
+            if progress_cb:
+                await progress_cb(completed_items, total_items)
+
+        music_url = detail.get('music_url')
+        if music_url:
+            if is_canceled and is_canceled():
+                raise asyncio.CancelledError()
+            music_path = os.path.join(dest_dir, 'music.mp3')
+            tmp_music = music_path + '.part'
+            try:
+                async with session.get(music_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await asyncio.to_thread(lambda: open(tmp_music, 'wb').write(data))
+                        os.replace(tmp_music, music_path)
+                        saved_files.append(music_path)
+            except Exception as e:
+                log.warning('下载图集背景音乐失败: %s', e)
+            completed_items += 1
+            if progress_cb:
+                await progress_cb(completed_items, total_items)
+
+    return saved_files

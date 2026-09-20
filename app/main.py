@@ -607,9 +607,9 @@ class Notifier(DownloadQueueNotifier):
             p for p in (getattr(dl, 'uploader', ''), getattr(dl, 'upload_date', ''), dl.title) if p
         ) or dl.title
         if dl.status == 'finished':
-            await tg_bot_mgr.send_notification(f"✅ <b>下载已完成</b>\n📹 名称: <code>{full_name}</code>\n📁 路径: <code>{dl.folder or '默认'}</code>")
+            await tg_bot_mgr.send_notification(f"✅ <b>下载已完成</b>\n📹 名称: <code>{full_name}</code>\n📁 路径: <code>{dl.folder or '默认'}</code>", dl=dl)
         elif dl.status == 'error':
-            await tg_bot_mgr.send_notification(f"❌ <b>下载失败</b>\n📹 名称: <code>{full_name}</code>\n⚠️ 原因: {dl.error or dl.msg}")
+            await tg_bot_mgr.send_notification(f"❌ <b>下载失败</b>\n📹 名称: <code>{full_name}</code>\n⚠️ 原因: {dl.error or dl.msg}", dl=dl)
 
     async def canceled(self, id):
         log.info(f"Notifier: Download canceled - {id}")
@@ -622,8 +622,42 @@ class Notifier(DownloadQueueNotifier):
 dqueue = DownloadQueue(config, Notifier())
 tg_bot_mgr = TelegramBotManager(config, dqueue)
 
+
+async def _cleanup_stale_temp_files():
+    """定期清理 24 小时前的残留 .part / .ytdl / .temp 碎片文件"""
+    await asyncio.sleep(60)
+    CLEANUP_INTERVAL = 6 * 3600  # 每 6 小时检查一次
+    STALE_AGE = 24 * 3600        # 24 小时前未修改的文件
+    TEMP_EXTENSIONS = ('.part', '.ytdl', '.temp')
+
+    while True:
+        try:
+            now = time.time()
+            scan_dirs = set(filter(None, [getattr(config, 'TEMP_DIR', None), getattr(config, 'DOWNLOAD_DIR', None)]))
+            for s_dir in scan_dirs:
+                if not os.path.isdir(s_dir):
+                    continue
+                for root, _, files in os.walk(s_dir):
+                    for f in files:
+                        lower = f.lower()
+                        if any(lower.endswith(ext) or ext + '-' in lower for ext in TEMP_EXTENSIONS):
+                            full_path = os.path.join(root, f)
+                            try:
+                                mtime = os.path.getmtime(full_path)
+                                if now - mtime > STALE_AGE:
+                                    os.remove(full_path)
+                                    log.info(f"已清理超过 24 小时的残留临时文件: {full_path}")
+                            except Exception as e:
+                                log.debug(f"检查/删除临时文件失败 {full_path}: {e}")
+        except Exception as e:
+            log.warning(f"定时碎片清理任务异常: {e}")
+
+        await asyncio.sleep(CLEANUP_INTERVAL)
+
+
 async def _tg_bot_startup(app):
     tg_bot_mgr.start()
+    bg_tasks.create_task(_cleanup_stale_temp_files(), name="stale_temp_cleanup")
 
 app.on_startup.append(_tg_bot_startup)
 

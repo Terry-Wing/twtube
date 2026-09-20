@@ -171,3 +171,11 @@ untrusted. Use the existing guards instead of hand-rolling:
 - Anything that becomes a filesystem path goes through `_is_within_directory` and
   `_sanitize_path_component` in `app/ytdl.py` — including values that arrive via
   yt-dlp metadata, which sites can influence.
+
+## Modification & Backup Policy (用户规定，必须严格遵守)
+
+- **修改前必须备份**：每次对代码进行修改优化之前，必须先在 `.backup/` 目录下为本次将要修改的文件建立完整备份。
+- **验证与备份轮转**：本次修改完成并经过测试验证无误后，等待下一次再启动新修改时，再将上一次修改前/后的稳定版本更新到备份中。
+- **本地变更记录**：每次修改均必须在根目录的 `CHANGELOG.md` 中详细记录修改日期、涉及文件、改动原因与实现细节。
+- **完成后输出一键推送命令**：每次修改并验证完成后，必须在最终回复中输出一条使用 `&&` 连接好的单行命令，方便用户在电脑 SSH 连入 NAS 后一键粘贴直接推送，格式固定为：
+  `cd /vol1/1000/开发/twtube && git add . && git commit -m "..." && git push origin main`

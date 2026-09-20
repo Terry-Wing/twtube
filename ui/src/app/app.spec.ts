@@ -544,4 +544,43 @@ describe('App', () => {
     });
   });
 
+  describe('completed list filter, search, and pagination', () => {
+    it('filters by platform, searches keywords, and pages correctly', () => {
+      const app = TestBed.createComponent(App).componentInstance;
+      const dl1 = { title: '抖音热舞', uploader: '小红', url: 'https://www.douyin.com/video/1', status: 'finished', filename: 'dy.mp4' } as Download;
+      const dl2 = { title: 'YouTube Tutorial', uploader: 'John', url: 'https://youtube.com/watch?v=2', status: 'finished', filename: 'yt.mp4' } as Download;
+      const dl3 = { title: 'B站教程', uploader: '张三', url: 'https://bilibili.com/video/av3', status: 'finished', filename: 'bili.mp4' } as Download;
+
+      downloads.done.set('k1', dl1);
+      downloads.done.set('k2', dl2);
+      downloads.done.set('k3', dl3);
+      downloads.doneChanged.next();
+
+      expect(app.donePlatformCounts.all).toBe(3);
+      expect(app.donePlatformCounts.douyin).toBe(1);
+      expect(app.donePlatformCounts.youtube).toBe(1);
+      expect(app.donePlatformCounts.bilibili).toBe(1);
+
+      // Filter by douyin
+      app.setDonePlatformFilter('douyin');
+      expect(app.cachedFilteredSortedDone.length).toBe(1);
+      expect(app.cachedPagedSortedDone[0][1].title).toBe('抖音热舞');
+
+      // Reset filter and search
+      app.setDonePlatformFilter('all');
+      app.doneSearchQuery = '教程';
+      app.onDoneSearchChange();
+      expect(app.cachedFilteredSortedDone.length).toBe(1);
+      expect(app.cachedPagedSortedDone[0][1].title).toBe('B站教程');
+
+      // Pagination
+      app.clearDoneSearch();
+      app.setDonePageSize(2);
+      expect(app.totalDonePages).toBe(2);
+      expect(app.cachedPagedSortedDone.length).toBe(2);
+      app.setDonePage(2);
+      expect(app.cachedPagedSortedDone.length).toBe(1);
+    });
+  });
+
 });
