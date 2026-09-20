@@ -112,3 +112,17 @@
   5. **备份机制与长期记忆规范**:
      - 将用户规定的「代码修改前备份与变更记录规范」固化写入 `AGENTS.md`。
      - 本次修改前已将所有涉及的原始文件完整快照备份至 `.backup/`，并在 `.gitignore` 中忽略备份目录。
+
+---
+
+### 2026-09-20 - 修复前端严格模板检查与 CI/Docker 构建编译错误
+- **修改类型**: fix
+- **涉及文件**:
+  - `ui/src/app/app.ts`
+  - `ui/src/app/app.html`
+- **详细说明**:
+  1. **原因**: GitHub Actions 在 Docker 构建前端静态资源阶段（`pnpm run build`）报错失败。经排查，`ui/tsconfig.json` 开启了 `"noPropertyAccessFromIndexSignature": true` 与 `"strictTemplates": true` 严格检查。
+  2. **解决**:
+     - 在 `app.ts` 中新增强类型接口 `PlatformCounts` 与 `PlatformKey`，将 `donePlatformCounts` 从 `Record<string, number>` 索引签名类型改为明确命名的强类型接口，消除 Angular 模板点访问（`.all`、`.douyin` 等）触发的 TS4111 严格报错。
+     - 将 `app.html` 分页控制栏中的内联复杂三元运算抽取为 `App` 组件的计算属性 `doneStartIndex` 与 `doneEndIndex`，避免在 HTML 模板插值表达式中解析比较运算符引发的语法歧义。
+     - 规范搜索输入框的 `[ngModel]` 与 `(ngModelChange)` 传参，确保响应即时且类型安全。

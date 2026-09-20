@@ -802,7 +802,7 @@
         <!-- 搜索框 -->
         <div class="input-group input-group-sm" style="max-width: 320px;">
           <span class="input-group-text"><fa-icon [icon]="faSearch" /></span>
-          <input type="text" class="form-control" placeholder="搜索标题 / 博主 / 文件名..." [(ngModel)]="doneSearchQuery" (ngModelChange)="onDoneSearchChange()" />
+          <input type="text" class="form-control" placeholder="搜索标题 / 博主 / 文件名..." [ngModel]="doneSearchQuery" (ngModelChange)="onDoneSearchChange($event)" />
           @if (doneSearchQuery) {
             <button class="btn btn-outline-secondary" type="button" (click)="clearDoneSearch()"><fa-icon [icon]="faTimesCircle" /></button>
           }
@@ -963,7 +963,7 @@
     <!-- 分页控制栏 -->
     <div class="d-flex flex-wrap justify-content-between align-items-center px-2 py-3 border-top gap-2">
       <div class="text-muted small">
-        显示 {{ cachedFilteredSortedDone.length === 0 ? 0 : (doneCurrentPage - 1) * (donePageSize <= 0 ? cachedFilteredSortedDone.length : donePageSize) + 1 }} - {{ donePageSize <= 0 ? cachedFilteredSortedDone.length : (doneCurrentPage * donePageSize > cachedFilteredSortedDone.length ? cachedFilteredSortedDone.length : doneCurrentPage * donePageSize) }} 条，共 {{ cachedFilteredSortedDone.length }} 条
+        显示 {{ doneStartIndex }} - {{ doneEndIndex }} 条，共 {{ cachedFilteredSortedDone.length }} 条
         @if (cachedFilteredSortedDone.length !== cachedSortedDone.length) {
           <span> (从 {{ cachedSortedDone.length }} 条中过滤)</span>
         }

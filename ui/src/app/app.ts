@@ -36,6 +36,18 @@ import {
 import { EtaPipe, SpeedPipe, FileSizePipe } from './pipes';
 import { SelectAllCheckboxComponent, ItemCheckboxComponent, ToastContainerComponent } from './components/';
 
+export type PlatformKey = 'douyin' | 'youtube' | 'bilibili' | 'tiktok' | 'instagram' | 'other';
+
+export interface PlatformCounts {
+  all: number;
+  douyin: number;
+  youtube: number;
+  bilibili: number;
+  tiktok: number;
+  instagram: number;
+  other: number;
+}
+
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -152,7 +164,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   cachedFilteredSortedDone: [string, Download][] = [];
   cachedPagedSortedDone: [string, Download][] = [];
   cachedPagedSortedDoneIds: string[] = [];
-  donePlatformCounts: Record<string, number> = {
+  donePlatformCounts: PlatformCounts = {
     all: 0,
     douyin: 0,
     youtube: 0,
@@ -1566,7 +1578,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.cookieService.set('metube_subscriptions_collapsed', this.subscriptionsCollapsed ? 'true' : 'false', { expires: this.settingsCookieExpiryDays });
   }
 
-  getPlatformKey(url: string | undefined): string {
+  getPlatformKey(url: string | undefined): PlatformKey {
     if (!url) return 'other';
     const u = url.toLowerCase();
     if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'douyin';
@@ -1584,7 +1596,10 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     this.cdr.markForCheck();
   }
 
-  onDoneSearchChange() {
+  onDoneSearchChange(query?: string) {
+    if (query !== undefined) {
+      this.doneSearchQuery = query;
+    }
     this.doneCurrentPage = 1;
     this.rebuildFilteredAndPagedDone();
     this.cdr.markForCheck();
@@ -1616,6 +1631,26 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     return Math.ceil(this.cachedFilteredSortedDone.length / this.donePageSize);
   }
 
+  get doneStartIndex(): number {
+    if (this.cachedFilteredSortedDone.length === 0) {
+      return 0;
+    }
+    if (this.donePageSize <= 0) {
+      return 1;
+    }
+    return (this.doneCurrentPage - 1) * this.donePageSize + 1;
+  }
+
+  get doneEndIndex(): number {
+    if (this.cachedFilteredSortedDone.length === 0) {
+      return 0;
+    }
+    if (this.donePageSize <= 0) {
+      return this.cachedFilteredSortedDone.length;
+    }
+    return Math.min(this.doneCurrentPage * this.donePageSize, this.cachedFilteredSortedDone.length);
+  }
+
   get donePageRange(): number[] {
     const total = this.totalDonePages;
     const current = this.doneCurrentPage;
@@ -1628,7 +1663,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   rebuildFilteredAndPagedDone() {
-    const counts: Record<string, number> = {
+    const counts: PlatformCounts = {
       all: this.cachedSortedDone.length,
       douyin: 0,
       youtube: 0,
@@ -1639,11 +1674,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     };
     for (const [, dl] of this.cachedSortedDone) {
       const key = this.getPlatformKey(dl.url);
-      if (counts[key] !== undefined) {
-        counts[key]++;
-      } else {
-        counts.other++;
-      }
+      counts[key]++;
     }
     this.donePlatformCounts = counts;
 
