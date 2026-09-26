@@ -31,6 +31,15 @@ _TG_MEDIA_DOWNLOAD_TIMEOUT = 3600
 _TG_PROGRESS_INTERVAL = 1.0
 # 「正在下载」状态消息的就地更新节流：Telegram 对 edit_text 有频率限制。
 _TG_STATUS_EDIT_INTERVAL = 5.0
+# 大文件并行下载：Telethon 的 download_media/iter_download 是**单连接串行**、每片上限
+# 512KB，当代理到 DC 的 RTT 较高时吞吐 ≈ 分片/RTT 被压住（实测单连接仅 ~600KB/s）。
+# 改用多连接分片并行可绕过这一限制（实测 4 连接 3.5x）。代理协议（http/socks5）不是
+# 瓶颈 —— 换协议不会变快。可用环境变量覆盖连接数。
+_TG_PARALLEL_CONNECTIONS = max(1, int(os.environ.get('TG_PARALLEL_CONNECTIONS', '4') or '4'))
+# 小于该体积不分片：并行有建连/调度开销，小文件反而更慢。
+_TG_PARALLEL_MIN_SIZE = 2 * 1024 * 1024
+# iter_download 的分片大小（=Telethon MAX_CHUNK_SIZE）。offset/stride 须为其倍数。
+_TG_REQUEST_SIZE = 512 * 1024
 
 import time
 
@@ -38,9 +47,12 @@ import time
 def _parse_proxy_url(raw: str):
     """把代理 URL 转成 Telethon 的 proxy 参数。
 
-    Telethon 只支持 socks5/mtproxy，**不支持 http 代理**（http 代理仅用于
-    python-telegram-bot 的 Bot API 请求）。因此这里只在识别到 socks5/socks4
-    时才返回参数，其它协议返回 None 让调用方直连。
+    Telethon 1.45 + python-socks 支持 socks5 / socks4 / http 三种代理
+    （`ProxyType`），旧注释「不支持 http」是错的（2026-09-26 实测更正）。
+
+    注意：**Telethon 不读取任何环境变量代理**（不像 requests/yt-dlp 会自动用
+    HTTP_PROXY），它只认显式传入的 `proxy=`。所以由调用方负责把 HTTP_PROXY /
+    TG_PROXY_URL 取出来交给本函数解析，Telethon 本身不会去看环境变量。
 
     返回 None 或 dict(proxy_type, addr, port, username, password, rdns)。
     """
@@ -51,20 +63,22 @@ def _parse_proxy_url(raw: str):
         parts = urlsplit(raw)
         scheme = (parts.scheme or '').lower()
     except ValueError:
-        log.warning('无法解析 TG_PROXY_URL，将直连')
+        log.warning('无法解析代理 URL，将直连')
         return None
-    if scheme not in ('socks5', 'socks5h', 'socks4', 'socks4a'):
-        log.warning(
-            'Telethon 不支持 "%s" 代理（仅 socks5/socks4），媒体采集将直连；'
-            'Bot API 机器人仍照常走 HTTP_PROXY。',
-            scheme or '未知协议',
-        )
+    if scheme not in ('socks5', 'socks5h', 'socks4', 'socks4a', 'http', 'https'):
+        log.warning('不支持的代理协议 "%s"，媒体采集将直连', scheme or '未知协议')
         return None
     if not parts.hostname or not parts.port:
-        log.warning('TG_PROXY_URL 缺少主机或端口，将直连')
+        log.warning('代理 URL 缺少主机或端口，将直连')
         return None
-    proxy_type = 'socks5' if scheme.startswith('socks5') else 'socks4'
-    # socks5h/socks4a 表示由代理端解析域名（rdns=True）；其余本地解析。
+    if scheme.startswith('socks5'):
+        proxy_type = 'socks5'
+    elif scheme.startswith('socks4'):
+        proxy_type = 'socks4'
+    else:
+        proxy_type = 'http'
+    # socks5h/socks4a 让代理端解析域名（rdns=True）；socks5/socks4/http 本地解析。
+    # http 代理不支持 rdns，恒为 False。
     rdns = scheme.endswith('h') or scheme.endswith('a')
     proxy = {
         'proxy_type': proxy_type,
@@ -89,7 +103,12 @@ class TelegramBotManager:
         # MTProto 凭据（用于下载媒体文件；缺失时媒体采集功能自动禁用）
         self.api_id = os.environ.get('TG_API_ID', '').strip()
         self.api_hash = os.environ.get('TG_API_HASH', '').strip()
-        self.proxy = _parse_proxy_url(os.environ.get('TG_PROXY_URL', '').strip())
+        # MTProto 出口代理：优先 TG_PROXY_URL（可单独指定，比如给 MTProto 走 socks5），
+        # 未单独配置时回退到 HTTP_PROXY，与 yt-dlp / Bot API 侧共用一个出口。
+        # Telethon 不读环境变量，必须在此显式解析后再传给它。
+        tg_proxy_raw = (os.environ.get('TG_PROXY_URL', '').strip()
+                        or os.environ.get('HTTP_PROXY', '').strip())
+        self.proxy = _parse_proxy_url(tg_proxy_raw)
         self.tg_client = None
         # 记录 URL / 视频 ID 对应的 Telegram 消息上下文（用于下载完成后精准引用回复）
         self._msg_contexts: dict[str, dict] = {}
@@ -256,7 +275,8 @@ class TelegramBotManager:
         if self.tg_client is None:
             await message.reply_text(
                 "⚠️ 媒体采集未启用或 MTProto 未连接。\n"
-                "请检查 TG_API_ID / TG_API_HASH / TG_PROXY_URL 是否配置正确，并查看容器日志。"
+                "请检查 TG_API_ID / TG_API_HASH / HTTP_PROXY（或 TG_PROXY_URL）是否配置正确，"
+                "并查看容器日志。"
             )
             return
 
@@ -552,12 +572,20 @@ class TelegramBotManager:
                 with contextlib.suppress(Exception):
                     await on_progress(current, total, speed, eta)
 
+        path = None
         try:
-            path = await asyncio.wait_for(
-                self.tg_client.download_media(
-                    message, file=abs_path, progress_callback=_progress),
-                timeout=_TG_MEDIA_DOWNLOAD_TIMEOUT,
-            )
+            if expected and expected >= _TG_PARALLEL_MIN_SIZE:
+                # 大文件：多连接分片并行，绕过单连接受 RTT 限制的速度上限。
+                await asyncio.wait_for(
+                    self._download_parallel(message, abs_path, expected, _progress),
+                    timeout=_TG_MEDIA_DOWNLOAD_TIMEOUT,
+                )
+            else:
+                path = await asyncio.wait_for(
+                    self.tg_client.download_media(
+                        message, file=abs_path, progress_callback=_progress),
+                    timeout=_TG_MEDIA_DOWNLOAD_TIMEOUT,
+                )
         except asyncio.TimeoutError:
             raise RuntimeError(f'下载超时（超过 {_TG_MEDIA_DOWNLOAD_TIMEOUT // 60} 分钟）')
 
@@ -574,6 +602,79 @@ class TelegramBotManager:
             raise RuntimeError('下载中断，未收到完整文件（连接可能被断开）')
         log.info('TG 媒体已落盘: %s', abs_path)
         return os.path.basename(abs_path)
+
+    async def _download_parallel(self, message, abs_path, expected, on_progress):
+        """多连接分片并行下载一个大文件，绕过单连接受 RTT 限制的速度上限。
+
+        背景（2026-09-26 实测）：`download_media` / `iter_download` 是**单连接串行**，
+        每片上限 512KB。代理到 Telegram DC 的 RTT 偏高时，吞吐 ≈ 分片 / RTT，实测同一
+        个 68MB 文件经同一 socks5 代理：1 连接 635 KB/s、4 连接 2215 KB/s（3.5x）。
+        代理协议不是瓶颈 —— 换 http 反而略慢，故此处与协议无关。
+
+        分片按 `_TG_REQUEST_SIZE` 对齐（Telethon 要求 offset 是 4096 的倍数），各
+        worker 用 pwrite 写入各自区间、互不干扰；进度按累计字节聚合上报，因此调用方
+        看到的仍是「单调递增的总进度」，speed/eta 估计照常成立。
+
+        注意：任一 worker 若被静默截断（断连），最终字节数会与 expected 不符，
+        由调用方的完整性校验兜住 —— 宁可报失败，也不留半截文件当好文件。
+        """
+        n = _TG_PARALLEL_CONNECTIONS
+        req = _TG_REQUEST_SIZE
+        # 每段对齐到分片大小；末段吃下余数，保证各段之和恰为 expected。
+        seg = expected // n
+        seg -= seg % req
+        if seg < req:
+            seg = req
+
+        bounds = []
+        start = 0
+        for i in range(n):
+            end = expected if i == n - 1 else start + seg
+            if end <= start:
+                break
+            bounds.append((start, end))
+            start = end
+
+        # 预分配文件长度：各 worker 从不同 offset 写，稀疏空洞随后被数据填满。
+        fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT, 0o644)
+        pwrite = getattr(os, 'pwrite', None)
+
+        def _write_at(pos, data):
+            # pwrite 不移动文件偏移，天然适配并发写；缺失时退回 lseek+write
+            # （二者之间无 await，asyncio 单线程下不会被其它 worker 插队）。
+            if pwrite is not None:
+                pwrite(fd, data, pos)
+            else:
+                os.lseek(fd, pos, os.SEEK_SET)
+                os.write(fd, data)
+
+        try:
+            os.ftruncate(fd, expected)
+            done = [0]
+            lock = asyncio.Lock()
+
+            async def worker(s, e):
+                limit = (e - s + req - 1) // req
+                pos = s
+                async for chunk in self.tg_client.iter_download(
+                        message.media, offset=s, limit=limit, request_size=req):
+                    if pos + len(chunk) > e:
+                        chunk = chunk[:e - pos]
+                    if not chunk:
+                        break
+                    _write_at(pos, chunk)
+                    pos += len(chunk)
+                    # 聚合进度：多 worker 并发回调，用锁串行化写入与上报，
+                    # 保证 current 单调、speed 样本不被并发打乱。
+                    async with lock:
+                        done[0] += len(chunk)
+                        await on_progress(done[0], expected)
+                    if pos >= e:
+                        break
+
+            await asyncio.gather(*[worker(s, e) for s, e in bounds])
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _discard_partial(abs_path):

@@ -42,6 +42,17 @@
 
 ## 🕒 历史变更记录
 
+### 2026-09-26（第六轮）
+- **refactor(TG)**: MTProto 出口代理支持 **http**，并新增**回退到 `HTTP_PROXY`**，据此可在 compose 里删掉 `TG_PROXY_URL`，只留一个 `PROXY_URL`。
+  - 关键更正：**Telethon 不读取任何环境变量代理**（不像 requests/yt-dlp 自动用 `HTTP_PROXY`），只认显式传入的 `proxy=`。所以「Telethon 支持 http 代理」≠「删掉 `TG_PROXY_URL` 就会自动用 `HTTP_PROXY`」——直接删会让 MTProto **直连**（国内必然连不上）。正解是代码显式把 `HTTP_PROXY` 解析后传给 Telethon。
+  - `_parse_proxy_url` 白名单加入 `http`/`https`，映射到 `ProxyType.HTTP`（`http` 代理不支持 rdns，恒 `False`）；`TelegramBotManager` 取 `TG_PROXY_URL or HTTP_PROXY` 作为 MTProto 出口。保留了「可单独给 MTProto 指定 socks5」的能力（配了 `TG_PROXY_URL` 就优先用它）。
+  - 实测：经 **http 代理 + 并行下载** 68.8MB / 19.8s = **3391 KB/s**，大小与 sha256 均与 socks5 通道**逐字节一致**；解析单测覆盖 http/https/socks5(h)/socks4a/非法协议全过。
+  - 部署侧精简：`/projects/twtube/compose.yaml` 删去 `- TG_PROXY_URL=${TG_PROXY_URL}`，`.env` 删去 `TG_PROXY_URL`（其余键值长度逐一校验未变，避免误伤密钥）。
+
+### 2026-09-26（第五轮）
+- **perf(TG)**: 大文件改为**多连接分片并行下载**，绕过单连接的速度上限。Telethon 的 `download_media`/`iter_download` 是**单连接串行**、每片上限 512KB，当代理到 Telegram DC 的 RTT 较高时吞吐 ≈ 分片/RTT 被压住（实测单连接仅 ~300–800 KB/s）。改为按分片区间同时跑 N 条连接（`os.pwrite` 各写各的区间，进度按累计字节聚合上报），默认 4 连接，可用 `TG_PARALLEL_CONNECTIONS` 覆盖；小于 2MB 不分片（并行有调度开销）。**实测同一个 68.8MB 文件、同一 socks5 代理：单连 301 KB/s → 并行 3505 KB/s（11.6x），且 sha256 与串行下载逐字节一致**（`app/tg_bot.py::_download_parallel`）。
+- **docs(TG)**: 更正一个错误结论。旧注释/CHANGELOG 写的「Telethon 不支持 http 代理」**是错的** —— Telethon 1.45 + python-socks 明确支持 `ProxyType.HTTP`。之所以仍只用 socks5，是因为**实测 http(7890) 反而略慢**（666 KB/s vs socks5 789 KB/s），而且瓶颈根本不在代理协议：同一个代理下载 Cloudflare 能跑 16 MB/s，而 Telegram DC 只有 0.8 MB/s，说明是**代理节点到 Telegram 的路由**受限。**回答「换成 7890 会不会更快」：不会，实测更慢。**
+
 ### 2026-09-26（第四轮）
 - **fix(TG)**: 补齐 TG 采集的「下载速度」与「剩余时间」。网页这两列读的是 `download.speed`（字节/秒）和 `download.eta`（秒），而 TG 通道原先只填了 `percent`/`size`/`msg`，从没算过这两个值，因而为空。现在用相邻两次进度回调的「字节差 / 时间差」求瞬时速度并做指数平滑（α=0.3），有总大小时再推 ETA（`app/tg_bot.py::_download_media`）；聊天里的「正在下载」提示也一并显示速度与剩余时间。yt-dlp 那条通道由 yt-dlp 自行填这两列，本次补齐后两者表现一致。
 - **fix(TG)**: 补齐 TG 媒体的类型判定。原先只有一张 12 项扩展名白名单（`_TG_VIDEO_EXTS`）决定条目算「视频」还是「Document」，`rmvb`/`m2ts`/`ogv` 这类真视频会被误标成 Document。现改为**扩展名名单与 Telegram 自带类型（`message.video`/`audio`/`voice`）取并集**：名单兜底常见容器（补至 32 种视频 + 15 种音频），而 Telegram 的权威标注能救回**无扩展名或冷门容器**的视频。这只影响网页类型列显示，不影响登记或落盘（`app/ytdl.py::_tg_media_descriptor`/`build_tg_media_entry`，`app/tg_bot.py::_fetch_and_register`）。
@@ -64,7 +75,7 @@
   - 走 MTProto（Telethon）下载，突破 Bot API `getFile` 的 20MB 上限，单文件可达 2GB；用同一 bot token 登录，无需手机验证码，只需补 `TG_API_ID`/`TG_API_HASH`（`app/tg_bot.py`、`pyproject.toml`）。
   - 媒体落盘到 `DOWNLOAD_DIR/<TG_MEDIA_DIR>`（默认 `telegram`），文件名来自 Telegram 原名并做路径清洗 + 重名 `_1/_2` 防覆盖；登记记录的 `folder=telegram`、`filename` 仅存文件名，与前端 `download/<folder>/<filename>` 链接拼接一致（`app/ytdl.py::allocate_tg_media_path`/`enqueue_tg_media`）。
   - 相册（media group）按 `media_group_id` 缓冲聚合后统一登记，避免一次相册被拆成多条记录（`app/tg_bot.py`）。
-  - Telethon **不支持 http 代理**（仅 socks5/mtproto），新增 `TG_PROXY_URL` 单独配置；未配置时直连，Bot API 侧仍照常走 `HTTP_PROXY`（`app/tg_bot.py::_parse_proxy_url`）。
+  - ~~Telethon **不支持 http 代理**（仅 socks5/mtproto）~~ **此结论有误**（2026-09-26 更正）：Telethon 1.45 + python-socks 实际支持 socks5/socks4/**http** 三种代理。新增 `TG_PROXY_URL` 可单独指定 MTProto 出口；**未配置时回退到 `HTTP_PROXY`**，与 yt-dlp/Bot API 共用一个出口（`app/tg_bot.py::_parse_proxy_url`）。
 - **feat(前端)**: 完成列表平台筛选新增 **Telegram** 一档，并补 `getPlatformKey`/`getPlatformName` 对 `tg://` 标记的识别（`ui/src/app/app.ts`、`ui/src/app/app.html`）。
 - **feat(格式)**: `dl_formats` 放行 `images`/`document` 两种非 yt-dlp 下载类型，避免构造 Download 槽位时抛错（`app/dl_formats.py`）。
 - **feat(配置)**: `Config` 新增 `TG_MEDIA_DIR`（含相对路径校验，非法值回退默认）并加入 `_FRONTEND_KEYS`（`app/main.py`）。
