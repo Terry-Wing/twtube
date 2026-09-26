@@ -3,6 +3,11 @@ import copy
 AUDIO_FORMATS = ("m4a", "mp3", "opus", "wav", "flac")
 CAPTION_MODES = ("auto_only", "manual_only", "prefer_manual", "prefer_auto")
 
+# Telegram 媒体（文件/图片组）不由 yt-dlp 下载：Download 对象只用来占用并发槽位，
+# 它的 __init__ 仍会调用 get_format/get_opts，而这两个函数对未知 download_type 会
+# 直接抛 ValueError。因此这里显式放行，返回占位结果。
+MEDIA_TYPES = ("images", "document")
+
 
 def merge_ytdl_option_layers(presets, overrides, presets_config) -> dict:
     """Overlay named presets (in order) then per-item overrides onto a fresh dict.
@@ -56,6 +61,9 @@ def get_format(download_type: str, codec: str, format: str, quality: str) -> str
     format = (format or "any").strip().lower()
     codec = (codec or "auto").strip().lower()
     quality = (quality or "best").strip().lower()
+
+    if download_type in MEDIA_TYPES:
+        return "best"
 
     if format.startswith("custom:"):
         # Unreachable via the HTTP API (format is validated against a fixed
@@ -118,6 +126,9 @@ def get_opts(
     download_type = (download_type or "video").strip().lower()
     format = (format or "any").strip().lower()
     opts = copy.deepcopy(ytdl_opts)
+
+    if download_type in MEDIA_TYPES:
+        return opts
 
     postprocessors = []
 

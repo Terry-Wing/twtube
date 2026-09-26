@@ -793,6 +793,9 @@
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'instagram'" [class.btn-outline-secondary]="donePlatformFilter !== 'instagram'" (click)="setDonePlatformFilter('instagram')">
             Instagram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.instagram }}</span>
           </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'telegram'" [class.btn-outline-secondary]="donePlatformFilter !== 'telegram'" (click)="setDonePlatformFilter('telegram')">
+            Telegram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.telegram }}</span>
+          </button>
           @if (donePlatformCounts.other > 0) {
             <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'other'" [class.btn-outline-secondary]="donePlatformFilter !== 'other'" (click)="setDonePlatformFilter('other')">
               其他 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.other }}</span>

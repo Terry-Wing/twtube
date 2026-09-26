@@ -57,6 +57,10 @@ def _clean_and_normalize_url(url: str) -> str:
 
 def _detect_platform_subfolder(url: str) -> str:
     url_lower = (url or '').lower()
+    # Telegram 采集的媒体没有真实来源 URL，用虚拟 scheme 标记，便于归档到
+    # telegram 子目录并在前端单独筛选。
+    if url_lower.startswith('tg://'):
+        return 'telegram'
     if 'douyin.com' in url_lower or 'iesdouyin.com' in url_lower:
         return 'douyin'
     elif 'tiktok.com' in url_lower:
@@ -549,6 +553,14 @@ def _convert_srt_to_txt_file(subtitle_path: str):
         return None
 
 class DownloadQueueNotifier:
+    def bind(self, dqueue):
+        """Called once after the queue it belongs to is constructed.
+
+        Lets a notifier learn about its queue without a circular construction
+        dependency (e.g. Telegram media registration needs the queue).
+        """
+        return None
+
     async def added(self, dl):
         raise NotImplementedError
 
@@ -592,6 +604,7 @@ class DownloadInfo:
         sponsorblock=False,
         uploader="",
         upload_date="",
+        media_url="",
     ):
         self.id = id if len(custom_name_prefix) == 0 else f'{custom_name_prefix}.{id}'
         self.title = title if len(custom_name_prefix) == 0 else f'{custom_name_prefix}.{title}'
@@ -624,6 +637,8 @@ class DownloadInfo:
         self.uploader = uploader
         self.upload_date = upload_date
         self.subtitle_files = []
+        # Telegram 媒体在手机端播放用的原始下载链接（仅媒体采集的条目有值）。
+        self.media_url = media_url
 
     # Fields that are useful server-side but must not be broadcast to browser
     # clients: ``entry`` is the full yt-dlp info-dict (potentially large and
@@ -689,6 +704,8 @@ class DownloadInfo:
             self.uploader = ""
         if not hasattr(self, "upload_date"):
             self.upload_date = ""
+        if not hasattr(self, "media_url"):
+            self.media_url = ""
         if not hasattr(self, "chapter_template"):
             self.chapter_template = ""
         if not hasattr(self, "subtitle_language"):
@@ -727,6 +744,7 @@ _PERSISTED_DOWNLOAD_FIELDS = (
     "uploader",
     "upload_date",
     "url",
+    "media_url",
     "quality",
     "download_type",
     "codec",
@@ -1720,7 +1738,7 @@ class DownloadQueue:
         # docstring for why the guard can't be installed process-wide.
         debug_logging = logging.getLogger().isEnabledFor(logging.DEBUG)
         user_opts = self._build_ytdl_options(ytdl_options_presets, ytdl_options_overrides)
-        
+
         # 专门增强抖音高清提取策略
         if 'douyin.com' in (url or '') or 'iesdouyin.com' in (url or ''):
             if 'extractor_args' not in user_opts:
@@ -2350,6 +2368,126 @@ class DownloadQueue:
                 os.remove(partial)
             except OSError:
                 pass
+
+    # ===== Telegram 媒体采集（视频/图片文件，非 yt-dlp 下载） =====
+
+    # 这些后缀走“视频”路径；其余文档（压缩包等）一律当普通文件处理。
+    _TG_VIDEO_EXTS = frozenset({
+        'mp4', 'mkv', 'mov', 'webm', 'avi', 'flv', 'wmv', 'm4v', 'ts', 'mpg', 'mpeg', '3gp',
+    })
+    # Telegram 提供的文件名属不可信输入，扩展名只接受这个安全字符集。
+    _TG_EXT_RE = re.compile(r'^\.[A-Za-z0-9]{1,10}$')
+    _TG_MAX_STEM_BYTES = 120
+
+    def tg_media_region(self) -> str:
+        """TG 媒体在 DOWNLOAD_DIR 下的子目录名（已在 Config 里校验过）。"""
+        return str(getattr(self.config, 'TG_MEDIA_DIR', 'telegram') or 'telegram').strip('/') or 'telegram'
+
+    def allocate_tg_media_path(self, file_name_hint: str) -> tuple[str, str]:
+        """为 TG 媒体分配一个唯一、安全的落盘路径，返回 (绝对路径, 文件名)。
+
+        文件名来自 Telegram，属不可信输入：先取 basename 再用 _sanitize_path_component
+        清洗（去掉路径分隔符/穿越片段），扩展名限制在安全字符集内，最后与既有文件
+        比对、重名时追加 _1/_2… —— 与 yt-dlp 下载的防覆盖规则保持一致。
+        """
+        target_dir = os.path.join(self.config.DOWNLOAD_DIR, self.tg_media_region())
+        # 目录可能首次使用时还不存在；这里一并创建，使分配出的路径总是可写的。
+        os.makedirs(target_dir, exist_ok=True)
+        stem_raw, ext_raw = os.path.splitext(os.path.basename(str(file_name_hint or '')))
+        # _sanitize_path_component 对空/纯非法字符会退化为 '_'，这不能当文件名用。
+        stem = _sanitize_path_component(stem_raw)
+        if not stem or stem == '_':
+            stem = 'tg_media'
+        stem = stem[: self._TG_MAX_STEM_BYTES] or 'tg_media'
+        ext = ext_raw.lower() if self._TG_EXT_RE.fullmatch(ext_raw) else ''
+        candidate = f'{stem}{ext}'
+        counter = 1
+        while os.path.exists(os.path.join(target_dir, candidate)):
+            candidate = f'{stem}_{counter}{ext}'
+            counter += 1
+        return os.path.join(target_dir, candidate), candidate
+
+    async def enqueue_tg_media(
+        self,
+        *,
+        file_name: str,
+        source_message_id=None,
+        chat_id=None,
+        is_image: bool = False,
+    ):
+        """把已落盘的 TG 媒体登记为一条已完成记录（不做任何下载动作）。
+
+        file_name 是 allocate_tg_media_path 返回的最终文件名，所在目录由 Config
+        的 TG_MEDIA_DIR 决定。本方法只负责造 DownloadInfo、发 added/completed
+        事件，使它出现在 Web 完成列表并可被「Telegram」筛选。返回该条目或 None。
+        """
+        if not file_name:
+            return None
+        basename = os.path.basename(str(file_name))
+        region = self.tg_media_region()
+        # 与其它下载一致：filename 只存「相对下载目录」的文件名，子目录由 folder
+        # 单独承载；前端 buildDownloadLink 会拼成 download/<folder>/<filename>。
+        _stem, ext_raw = os.path.splitext(basename)
+        ext = ext_raw.lstrip('.').lower()
+
+        if is_image:
+            dl_type = 'images'
+        elif ext in self._TG_VIDEO_EXTS:
+            dl_type = 'video'
+        else:
+            dl_type = 'document'
+
+        # URL 必须唯一且不能含 '/'：它既是完成队列的 key，也会被前端当作列表列名。
+        if chat_id is not None and source_message_id is not None:
+            fake_url = f'tg://{chat_id}_{source_message_id}'
+        else:
+            fake_url = f'tg://{_sanitize_path_component(str(time.time_ns()))}'
+        # 同一消息正常只登记一次；万一重复（如用户重发同一文件），退到时间戳，
+        # 避免覆盖已有记录。
+        if self.done.exists(fake_url):
+            fake_url = f'tg://{_sanitize_path_component(str(time.time_ns()))}'
+
+        info = DownloadInfo(
+            id=f'tg-{_sanitize_path_component(str(time.time_ns()))}',
+            title=basename,
+            url=fake_url,
+            quality='best',
+            download_type=dl_type,
+            codec='auto',
+            format=ext or 'bin',
+            folder=region,
+            custom_name_prefix='',
+            error=None,
+            entry=None,
+            playlist_item_limit=0,
+            split_by_chapters=False,
+            chapter_template=None,
+            subtitle_language='zh-Hans',
+            subtitle_mode='prefer_manual',
+            ytdl_options_presets=[],
+            ytdl_options_overrides={},
+            uploader='',
+            upload_date='',
+        )
+        info.status = 'finished'
+        info.percent = 100
+        info.filename = basename
+        info.msg = 'Telegram 媒体已归档'
+        # 记录真实文件大小；拿不到也不影响登记。
+        try:
+            info.size = os.path.getsize(
+                os.path.join(self.config.DOWNLOAD_DIR, region, basename))
+        except OSError:
+            info.size = None
+
+        await self.done.put(Download(None, None, None, None, info.quality, info.format, {}, info))
+        # 先 added 再 completed，与 yt-dlp 下载的消息顺序一致：'completed' 会把行
+        # 从队列搬进完成列表（前端对没有对应 added 的 'updated' 会丢弃，这里不涉）。
+        if self.notifier is not None:
+            await self.notifier.added(info)
+            await self.notifier.completed(info)
+        log.info('Telegram 媒体已归档: %s -> %s/%s', basename, region, basename)
+        return info
 
     async def add(
         self,

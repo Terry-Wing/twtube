@@ -36,7 +36,7 @@ import {
 import { EtaPipe, SpeedPipe, FileSizePipe } from './pipes';
 import { SelectAllCheckboxComponent, ItemCheckboxComponent, ToastContainerComponent } from './components/';
 
-export type PlatformKey = 'douyin' | 'youtube' | 'bilibili' | 'tiktok' | 'instagram' | 'other';
+export type PlatformKey = 'douyin' | 'youtube' | 'bilibili' | 'tiktok' | 'instagram' | 'telegram' | 'other';
 
 export interface PlatformCounts {
   all: number;
@@ -45,6 +45,7 @@ export interface PlatformCounts {
   bilibili: number;
   tiktok: number;
   instagram: number;
+  telegram: number;
   other: number;
 }
 
@@ -171,6 +172,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     bilibili: 0,
     tiktok: 0,
     instagram: 0,
+    telegram: 0,
     other: 0,
   };
   lastCopiedErrorId: string | null = null;
@@ -948,6 +950,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   getPlatformName(url: string | undefined): string {
     if (!url) return '默认';
     const u = url.toLowerCase();
+    if (u.startsWith('tg://')) return 'Telegram';
     if (u.includes('youtube.com') || u.includes('youtu.be')) return 'YouTube';
     if (u.includes('instagram.com') || u.includes('instagr.am')) return 'Instagram';
     if (u.includes('tiktok.com')) return 'TikTok';
@@ -1581,6 +1584,8 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   getPlatformKey(url: string | undefined): PlatformKey {
     if (!url) return 'other';
     const u = url.toLowerCase();
+    // Telegram 采集的媒体用虚拟 scheme 标记，与后端 _detect_platform_subfolder 保持一致。
+    if (u.startsWith('tg://')) return 'telegram';
     if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'douyin';
     if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
     if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'bilibili';
@@ -1670,6 +1675,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       bilibili: 0,
       tiktok: 0,
       instagram: 0,
+      telegram: 0,
       other: 0,
     };
     for (const [, dl] of this.cachedSortedDone) {

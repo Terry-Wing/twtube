@@ -29,6 +29,8 @@ from yt_dlp.version import __version__ as yt_dlp_version
 log = logging.getLogger('main')
 
 _NIGHTLY_TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+# TG_MEDIA_DIR 只允许简单的相对目录片段（不含反斜杠/冒号/空段/首尾斜杠）。
+_TG_MEDIA_DIR_RE = re.compile(r'^[A-Za-z0-9_.\- ]+(/[A-Za-z0-9_.\- ]+)*$')
 _RESTART_FOR_UPDATE = False
 
 def _request_graceful_exit() -> None:
@@ -89,7 +91,12 @@ class Config:
         'YTDL_OPTIONS_PRESETS_FILE': '',
         'ALLOW_YTDL_OPTIONS_OVERRIDES': 'false',
         'ALLOW_PRIVATE_ADDRESSES': 'false',
-        'CORS_ALLOWED_ORIGINS': '',
+        'TG_BOT_TOKEN': '',
+    'TG_CHAT_ID': '',
+    # 让 Telegram 机器人收到的媒体文件可以分配为自定义目录：媒体会落到
+    # DOWNLOAD_DIR/<TG_MEDIA_DIR> 下，而不是被强行塞进 DOWNLOAD_DIR。
+    'TG_MEDIA_DIR': 'telegram',
+    'CORS_ALLOWED_ORIGINS': '',
         'ROBOTS_TXT': '',
         'HOST': '0.0.0.0',
         'PORT': '8081',
@@ -156,6 +163,22 @@ class Config:
             val = getattr(self, attr)
             if val and not val.endswith('/'):
                 setattr(self, attr, val + '/')
+
+        # TG 媒体目录同样去掉首尾斜杠并校验：它会被拼进 OUTPUT_TEMPLATE 变成真实落盘
+        # 路径，所以不能允许绝对路径、'..' 或反斜杠逃出 DOWNLOAD_DIR。不合法时回退到
+        # 默认值并告警，而不是让机器人静默写到别处。
+        self.TG_MEDIA_DIR = self.TG_MEDIA_DIR.strip().strip('/')
+        if not self.TG_MEDIA_DIR:
+            self.TG_MEDIA_DIR = self._DEFAULTS['TG_MEDIA_DIR']
+        if not _TG_MEDIA_DIR_RE.fullmatch(self.TG_MEDIA_DIR) or any(
+                part in ('.', '..') for part in self.TG_MEDIA_DIR.split('/')):
+            log.warning(
+                'Ignoring TG_MEDIA_DIR "%s": it must be a relative path of simple '
+                'directory segments; falling back to "%s"',
+                self.TG_MEDIA_DIR,
+                self._DEFAULTS['TG_MEDIA_DIR'],
+            )
+            self.TG_MEDIA_DIR = self._DEFAULTS['TG_MEDIA_DIR']
 
         # DEFAULT_FOLDER only pre-fills the form's folder field, which the UI
         # does not even show without CUSTOM_DIRS. Sending one anyway would fail
@@ -236,6 +259,7 @@ class Config:
         'DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT',
         'SUBSCRIPTION_DEFAULT_CHECK_INTERVAL',
         'ALLOW_YTDL_OPTIONS_OVERRIDES',
+        'TG_MEDIA_DIR',
     )
 
     def frontend_safe(self) -> dict:
@@ -591,6 +615,9 @@ def _migrate_legacy_request(post: dict) -> dict:
     return post
 
 class Notifier(DownloadQueueNotifier):
+    def bind(self, dqueue):
+        self.dqueue = dqueue
+
     async def added(self, dl):
         log.info(f"Notifier: Download added - {dl.title}")
         await sio.emit('added', serializer.encode(dl))
@@ -620,6 +647,8 @@ class Notifier(DownloadQueueNotifier):
         await sio.emit('cleared', serializer.encode(id))
 
 dqueue = DownloadQueue(config, Notifier())
+# 让 Notifier 拿回它所属的队列（构造顺序所限，无法在构造函数里互引）。
+dqueue.notifier.bind(dqueue)
 tg_bot_mgr = TelegramBotManager(config, dqueue)
 
 

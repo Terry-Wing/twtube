@@ -12,6 +12,10 @@ dependencies = [
     "gmssl==3.2.2",
     "watchfiles",
     "python-telegram-bot>=21.0,<22.0",
+    # Telegram MTProto：Bot API 的 getFile 只能下 ≤20MB，视频基本超限；
+    # Telethon 用同一 bot token 登录可下到 2GB。python-socks 是它走 socks 代理的依赖。
+    "telethon>=1.36,<2.0",
+    "python-socks[asyncio]>=2.4",
 ]
 
 [dependency-groups]

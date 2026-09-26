@@ -3,6 +3,7 @@ import re
 import asyncio
 import contextlib
 import logging
+from urllib.parse import urlsplit, unquote
 
 import bg_tasks
 
@@ -20,7 +21,58 @@ _HEALTH_MAX_PENDING = 2      # 连续多少次发现「取不走的积压更新�
 # 正则提取文本中的任何 http/https 链接
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
 
+# MTProto（Telethon）部分
+_TELETHON_RETRY_DELAY = 30       # Telethon 断开后重建前的等待
+_TELETHON_HEALTH_INTERVAL = 30   # Telethon 健康检查间隔
+# 单次媒体下载的兜底超时：正常完成会自行结束，这个只用于避免任务永久悬挂。
+_TG_MEDIA_DOWNLOAD_TIMEOUT = 3600
+
 import time
+
+
+def _parse_proxy_url(raw: str):
+    """把代理 URL 转成 Telethon 的 proxy 参数。
+
+    Telethon 只支持 socks5/mtproxy，**不支持 http 代理**（http 代理仅用于
+    python-telegram-bot 的 Bot API 请求）。因此这里只在识别到 socks5/socks4
+    时才返回参数，其它协议返回 None 让调用方直连。
+
+    返回 None 或 dict(proxy_type, addr, port, username, password, rdns)。
+    """
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+        scheme = (parts.scheme or '').lower()
+    except ValueError:
+        log.warning('无法解析 TG_PROXY_URL，将直连')
+        return None
+    if scheme not in ('socks5', 'socks5h', 'socks4', 'socks4a'):
+        log.warning(
+            'Telethon 不支持 "%s" 代理（仅 socks5/socks4），媒体采集将直连；'
+            'Bot API 机器人仍照常走 HTTP_PROXY。',
+            scheme or '未知协议',
+        )
+        return None
+    if not parts.hostname or not parts.port:
+        log.warning('TG_PROXY_URL 缺少主机或端口，将直连')
+        return None
+    proxy_type = 'socks5' if scheme.startswith('socks5') else 'socks4'
+    # socks5h/socks4a 表示由代理端解析域名（rdns=True）；其余本地解析。
+    rdns = scheme.endswith('h') or scheme.endswith('a')
+    proxy = {
+        'proxy_type': proxy_type,
+        'addr': parts.hostname,
+        'port': int(parts.port),
+        'rdns': rdns,
+    }
+    if parts.username:
+        proxy['username'] = unquote(parts.username)
+    if parts.password:
+        proxy['password'] = unquote(parts.password)
+    return proxy
+
 
 class TelegramBotManager:
     def __init__(self, config, dqueue):
@@ -29,9 +81,17 @@ class TelegramBotManager:
         self.token = os.environ.get('TG_BOT_TOKEN', '').strip()
         self.allowed_chat_id = os.environ.get('TG_CHAT_ID', '').strip()
         self.bot_app = None
+        # MTProto 凭据（用于下载媒体文件；缺失时媒体采集功能自动禁用）
+        self.api_id = os.environ.get('TG_API_ID', '').strip()
+        self.api_hash = os.environ.get('TG_API_HASH', '').strip()
+        self.proxy = _parse_proxy_url(os.environ.get('TG_PROXY_URL', '').strip())
+        self.tg_client = None
         # 记录 URL / 视频 ID 对应的 Telegram 消息上下文（用于下载完成后精准引用回复）
         self._msg_contexts: dict[str, dict] = {}
         self._max_msg_contexts = 500
+        # 相册（media group）聚合：Telegram 会把一组图片拆成多条消息推送，
+        # 这里把同组附件收集起来一次性登记，避免相册被拆成多条完成记录。
+        self._albums: dict[str, dict] = {}
 
     def _record_msg_context(self, url: str, chat_id: str, message_id: int):
         if not url:
@@ -88,8 +148,17 @@ class TelegramBotManager:
         'default': '网页',
     }
 
+    # ===================== 权限校验 =====================
+
+    def _is_authorized(self, chat_id, user_id) -> bool:
+        if not self.allowed_chat_id:
+            return True
+        return str(chat_id) == self.allowed_chat_id or str(user_id) == self.allowed_chat_id
+
+    # ===================== 文本链接（Bot API 路径） =====================
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not update.message or not update.message.text:
+        if not update.message:
             return
 
         user_id = str(update.effective_user.id)
@@ -97,11 +166,20 @@ class TelegramBotManager:
         message_id = update.message.message_id
 
         # 权限校验：如果配置了 TG_CHAT_ID，则仅允许指定用户使用
-        if self.allowed_chat_id and chat_id != self.allowed_chat_id and user_id != self.allowed_chat_id:
+        if not self._is_authorized(chat_id, user_id):
             log.warning(f"Unauthorized TG message from user_id: {user_id}, chat_id: {chat_id}")
             return
 
-        raw_text = update.message.text.strip()
+        # 媒体文件/图片走跟文本不同的处理分支（纯文本消息这里直接返回）
+        if update.message.video or update.message.document or update.message.photo:
+            await self._handle_media(update)
+            return
+
+        text = update.message.text or update.message.caption
+        if not text:
+            return
+
+        raw_text = text.strip()
         extracted_url = self._extract_url(raw_text)
 
         if not extracted_url:
@@ -157,6 +235,182 @@ class TelegramBotManager:
             log.exception(f"Error handling TG download: {e}")
             await update.message.reply_text(f"❌ 系统处理异常: {str(e)}")
 
+    # ===================== 媒体文件（MTProto 路径） =====================
+
+    async def _handle_media(self, update: Update):
+        """处理机器人收到的视频/图片/文件：落到本地并登记进完成列表。"""
+        message = update.message
+        chat_id = str(update.effective_chat.id)
+        user_id = str(update.effective_user.id)
+        if not self._is_authorized(chat_id, user_id):
+            log.warning(f"Unauthorized TG media from user_id: {user_id}, chat_id: {chat_id}")
+            return
+
+        if self.tg_client is None:
+            await message.reply_text(
+                "⚠️ 媒体采集功能未启用：缺少 TG_API_ID / TG_API_HASH 配置。\n"
+                "请到 my.telegram.org 申请后填入环境变量并重启。"
+            )
+            return
+
+        # 相册（media_group_id 相同的多条消息）：等整组到齐后统一登记，
+        # 避免一次相册被拆成多条完成记录。
+        media_group_id = getattr(message, 'media_group_id', None)
+        if media_group_id:
+            self._buffer_album_member(update, str(media_group_id))
+            return
+
+        ok, note = await self._fetch_and_register(
+            message_id=message.message_id,
+            chat_id=chat_id,
+            is_image=bool(message.photo),
+        )
+        with contextlib.suppress(Exception):
+            await message.reply_text(note, parse_mode="HTML")
+
+    def _buffer_album_member(self, update: Update, media_group_id: str):
+        """相册成员到达：入缓冲；每个成员到达会重置静默计时，静默 1.5s 后整组处理。"""
+        bucket = self._albums.get(media_group_id)
+        if bucket is None:
+            bucket = {
+                'chat_id': str(update.effective_chat.id),
+                'members': [],          # [(message_id, is_image)]
+                'timer': None,
+                'reply_to': None,
+            }
+            self._albums[media_group_id] = bucket
+
+        message = update.message
+        bucket['members'].append((message.message_id, bool(message.photo)))
+        if bucket['reply_to'] is None:
+            bucket['reply_to'] = message
+
+        if bucket['timer'] is not None:
+            bucket['timer'].cancel()
+        loop = asyncio.get_running_loop()
+        bucket['timer'] = loop.call_later(
+            1.5, lambda: bg_tasks.create_task(
+                self._flush_album(media_group_id), name='tg_album_flush')
+        )
+        # 异常情况下（如中途崩溃未触发 flush）防止 _albums 无限增长：只清理旧桶。
+        if len(self._albums) > 200:
+            for k in [k for k, v in self._albums.items() if v is not bucket][:100]:
+                stale = self._albums.pop(k, None)
+                if stale and stale.get('timer') is not None:
+                    stale['timer'].cancel()
+
+    async def _flush_album(self, media_group_id: str):
+        bucket = self._albums.pop(media_group_id, None)
+        if not bucket:
+            return
+        if bucket.get('timer') is not None:
+            bucket['timer'].cancel()
+
+        saved, failed = 0, 0
+        for message_id, is_image in bucket['members']:
+            try:
+                ok, _ = await self._fetch_and_register(
+                    message_id=message_id,
+                    chat_id=bucket['chat_id'],
+                    is_image=is_image,
+                )
+                if ok:
+                    saved += 1
+                else:
+                    failed += 1
+            except Exception as exc:
+                failed += 1
+                log.exception('相册附件处理失败 msg=%s: %s', message_id, exc)
+
+        reply_to = bucket.get('reply_to')
+        if reply_to is not None:
+            note = f"✅ 相册已归档 {saved} 项" + (f"，失败 {failed} 项" if failed else "")
+            with contextlib.suppress(Exception):
+                await reply_to.reply_text(note, parse_mode="HTML")
+
+    async def _fetch_and_register(self, *, message_id, chat_id, is_image: bool) -> tuple[bool, str]:
+        """下载一个附件并登记为完成记录；返回 (是否成功, 回复文案)。"""
+        try:
+            basename = await self._download_media(message_id, chat_id)
+        except Exception as exc:
+            log.exception('TG 媒体下载失败 msg=%s: %s', message_id, exc)
+            return False, f"❌ 媒体下载失败: {exc}"
+
+        try:
+            info = await self.dqueue.enqueue_tg_media(
+                file_name=basename,
+                source_message_id=message_id,
+                chat_id=chat_id,
+                is_image=is_image,
+            )
+        except Exception as exc:
+            log.exception('TG 媒体登记失败 msg=%s: %s', message_id, exc)
+            return False, f"❌ 媒体登记失败: {exc}"
+
+        if info is None:
+            return False, "⚠️ 未能识别有效的文件名，已跳过。"
+
+        size_txt = ''
+        if info.size:
+            size_txt = f"\n💾 大小: <code>{self._human_size(info.size)}</code>"
+        return True, (
+            f"✅ 已归档到 TwTube\n"
+            f"📁 目录: <code>{info.folder}</code>\n"
+            f"🎬 文件: <code>{info.title}</code>{size_txt}"
+        )
+
+    async def _download_media(self, message_id, chat_id) -> str:
+        """用 MTProto 按消息自带的文件名下载到 TG_MEDIA_DIR，返回最终文件名。"""
+        if self.tg_client is None:
+            raise RuntimeError('MTProto 客户端未就绪')
+
+        entity = await self.tg_client.get_entity(int(chat_id))
+        message = await self.tg_client.get_messages(entity, ids=int(message_id))
+        if message is None or message.media is None:
+            raise RuntimeError('消息中没有可下载的媒体')
+
+        # 先按 Telegram 原名分配一个唯一路径，再把**该具体路径**交给 Telethon：
+        # 这样落盘名与登记进完成列表的 filename 完全一致，完成列表里的文件链接
+        # 才能直接命中真实文件（否则 Telethon 自行命名会与登记的记录对不上）。
+        abs_path, _basename = self.dqueue.allocate_tg_media_path(
+            self._media_name_hint(message))
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        # timeout 是单个 RPC 的超时，不覆盖整个文件传输；给够避免中途被掐断。
+        path = await self.tg_client.download_media(message, file=abs_path, timeout=30)
+        if not path:
+            raise RuntimeError('Telethon 未返回文件路径')
+        log.info('TG 媒体已落盘: %s', path)
+        return os.path.basename(path)
+
+    @staticmethod
+    def _media_name_hint(message) -> str:
+        """取 Telegram 文件的原名：文档用 file_name，视频/图片按属性兜底命名。"""
+        doc = getattr(message, 'document', None)
+        if doc is not None and getattr(doc, 'attributes', None):
+            for attr in doc.attributes:
+                name = getattr(attr, 'file_name', None)
+                if name:
+                    return name
+            for attr in doc.attributes:
+                if getattr(attr, 'duration', None) is not None:
+                    return f'tg_video_{getattr(message, "id", "x")}.mp4'
+        if getattr(message, 'photo', None) is not None:
+            return f'tg_photo_{getattr(message, "id", "x")}.jpg'
+        return f'tg_media_{getattr(message, "id", "x")}'
+
+    @staticmethod
+    def _human_size(num) -> str:
+        try:
+            num = float(num)
+        except (TypeError, ValueError):
+            return str(num)
+        for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+            if num < 1024 or unit == 'TB':
+                return f"{int(num)} B" if unit == 'B' else f"{num:.1f} {unit}"
+            num /= 1024
+        return f"{num:.1f} TB"
+    # ===================== 完成/失败通知（Bot API） =====================
+
     async def send_notification(self, text: str, dl=None):
         """用于下载完成后的回传通知，支持引用触发下载的原消息"""
         if not self.bot_app:
@@ -172,6 +426,10 @@ class TelegramBotManager:
             if ctx:
                 chat_id = ctx.get('chat_id') or chat_id
                 reply_to_message_id = ctx.get('message_id')
+            elif isinstance(url, str) and url.startswith('tg://'):
+                # Telegram 采集的媒体：不回传完成通知，避免用户每发一个文件
+                # 就收到一条多余消息（归档结果已由 _handle_media 直接回复）。
+                return
 
         if not chat_id:
             return
@@ -197,6 +455,8 @@ class TelegramBotManager:
         except Exception as e:
             log.warning(f"Failed to send TG notification: {e}")
 
+    # ===================== 启动与自愈 =====================
+
     def start(self):
         if not self.token:
             log.info("TG_BOT_TOKEN not configured. Telegram bot service disabled.")
@@ -216,7 +476,7 @@ class TelegramBotManager:
             # 就整体重建 Application（10s 后重试）。
             while True:
                 app = ApplicationBuilder().token(self.token).build()
-                app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
+                app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, self._handle_message))
                 self.bot_app = app  # 保持引用，让 send_notification 用到的始终是当前实例
                 try:
                     async with app:
@@ -282,3 +542,50 @@ class TelegramBotManager:
         # 用 bg_tasks.create_task 保持强引用并记录意外失败（裸 asyncio.create_task
         # 只被事件循环弱引用，可能在运行中被 GC 回收导致轮询静默消失）。
         self._bot_task = bg_tasks.create_task(_run_bot(), name="telegram_bot")
+
+        # MTProto 媒体采集（可选，缺凭据时自动跳过）
+        if self.api_id and self.api_hash:
+            self._mtproto_task = bg_tasks.create_task(
+                self._run_mtproto(), name="telegram_mtproto")
+        else:
+            log.info(
+                "TG_API_ID / TG_API_HASH not configured. "
+                "Telegram media (video/photo) capture disabled; link downloads still work."
+            )
+
+    async def _run_mtproto(self):
+        """Telethon 客户端自愈循环：断线自动重连，失败后延迟重建。"""
+        try:
+            from telethon import TelegramClient
+        except Exception as exc:
+            log.error("telethon 未安装，媒体采集功能不可用: %s", exc)
+            return
+
+        session_path = os.path.join(getattr(self.config, 'STATE_DIR', '.'), 'tg_media')
+        while True:
+            client = None
+            try:
+                client = TelegramClient(
+                    session_path,
+                    int(self.api_id),
+                    self.api_hash,
+                    proxy=self.proxy,
+                )
+                await client.start(bot_token=self.token)
+                self.tg_client = client
+                log.info("Telegram MTProto client started (media capture enabled).")
+                while True:
+                    await asyncio.sleep(_TELETHON_HEALTH_INTERVAL)
+                    if not client.is_connected():
+                        raise RuntimeError('MTProto 连接已断开')
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.exception("Telegram MTProto client error; rebuilding in %ds: %s",
+                              _TELETHON_RETRY_DELAY, exc)
+            finally:
+                self.tg_client = None
+                if client is not None:
+                    with contextlib.suppress(Exception):
+                        await client.disconnect()
+            await asyncio.sleep(_TELETHON_RETRY_DELAY)

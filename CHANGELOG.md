@@ -18,6 +18,7 @@
 
 3. **Telegram 机器人自动化集成 (`app/tg_bot.py`)**
    - 支持通过 Telegram Bot 发送视频链接直接推入下载队列。
+   - **媒体采集**：机器人收到的视频/图片/文件自动落盘到 `telegram/` 子目录（MTProto/Telethon，单文件上限 2GB），并在 Web 完成列表单独筛选。
    - **长连接自愈机制**：针对代理抖动导致长轮询挂起问题，实现 60 秒主动健康检查（API 探活、Pending 消息积压检测）及自动重建。
    - 下载完成时自动回传通知，包含博主名、发布日期及视频名称。
 
@@ -40,6 +41,16 @@
 ---
 
 ## 🕒 历史变更记录
+
+### 2026-09-26
+- **feat(TG)**: 新增 Telegram 媒体采集——机器人收到的视频/图片/文件自动落盘并登记进完成列表。
+  - 走 MTProto（Telethon）下载，突破 Bot API `getFile` 的 20MB 上限，单文件可达 2GB；用同一 bot token 登录，无需手机验证码，只需补 `TG_API_ID`/`TG_API_HASH`（`app/tg_bot.py`、`pyproject.toml`）。
+  - 媒体落盘到 `DOWNLOAD_DIR/<TG_MEDIA_DIR>`（默认 `telegram`），文件名来自 Telegram 原名并做路径清洗 + 重名 `_1/_2` 防覆盖；登记记录的 `folder=telegram`、`filename` 仅存文件名，与前端 `download/<folder>/<filename>` 链接拼接一致（`app/ytdl.py::allocate_tg_media_path`/`enqueue_tg_media`）。
+  - 相册（media group）按 `media_group_id` 缓冲聚合后统一登记，避免一次相册被拆成多条记录（`app/tg_bot.py`）。
+  - Telethon **不支持 http 代理**（仅 socks5/mtproto），新增 `TG_PROXY_URL` 单独配置；未配置时直连，Bot API 侧仍照常走 `HTTP_PROXY`（`app/tg_bot.py::_parse_proxy_url`）。
+- **feat(前端)**: 完成列表平台筛选新增 **Telegram** 一档，并补 `getPlatformKey`/`getPlatformName` 对 `tg://` 标记的识别（`ui/src/app/app.ts`、`ui/src/app/app.html`）。
+- **feat(格式)**: `dl_formats` 放行 `images`/`document` 两种非 yt-dlp 下载类型，避免构造 Download 槽位时抛错（`app/dl_formats.py`）。
+- **feat(配置)**: `Config` 新增 `TG_MEDIA_DIR`（含相对路径校验，非法值回退默认）并加入 `_FRONTEND_KEYS`（`app/main.py`）。
 
 ### 2026-09-19
 - **fix(TG)**: 代理抖动致轮询停摆不自愈，改为 60s 主动健康检查（含 pending 堆积检测）+ 重建 (`app/tg_bot.py`)。
