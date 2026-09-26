@@ -43,6 +43,12 @@
 ## 🕒 历史变更记录
 
 ### 2026-09-26
+- **fix(TG)**: 修复媒体采集「网页看不到进度、失败无声消失」——大文件下载期间现在会上报进度，失败也会在完成列表留一条 `error` 记录（`app/tg_bot.py::_download_media`/`_fetch_and_register`，`app/ytdl.py::begin_tg_media`/`update_tg_media`/`finish_tg_media`/`fail_tg_media`）。
+  - 原来只有「下完才登记」：下载中途网页无任何反馈，失败只在聊天回一句、从不进完成列表，所以视频失败在网页上完全不可见；现在先建 `pending` 条目再下载，期间按 Telethon `progress_callback` 广播 `updated`（节流 1s），使进度条与其它平台一致。
+  - 实测出真正的失败机制：**传输中若连接被断开，`download_media` 会静默返回 `None` 并留下半截文件**，既不抛异常也不重试。因此把「返回假值」判为失败，并校验最终字节数与 `document.size` 一致；失败时清掉半截文件，避免占空间或被误当完整文件。
+  - 长下载（661MB 约 14 分钟）暴露在更多健康检查窗口下：MTProto 自愈循环每 30s 探活，误判即 `disconnect()`，正在传输的连接当场报废——这正是「6 张图片成功、1 个视频失败」的成因（相册里的视频是图片的上万倍大）。
+  - 相册回复改为带**每条**失败原因（文件名 + 具体错误），不再只报一个数量。
+  - 真实验证：661MB 视频完整下载且逐字节一致；真机消息回放显示 `added → updated(进度 0.4%→8.0%) → completed` 事件链完整。
 - **fix(TG)**: 修复媒体采集必然失败——`download_media()` 并不存在 `timeout` 参数，误传后每次调用直接 `TypeError`，表现为转发任何图片/视频都提示失败（`app/tg_bot.py::_download_media`）。
   - 同时实测确认 bot 账号**不能**用聊天历史接口（`get_messages` 不带 `ids` 会抛 `BotMethodInvalidError`），但 `get_messages(peer, ids=<单条>)` 是允许的且能拿到真实 `file_reference`；据此保留“按 chat/message id 下载”的架构。
   - 实测否定了一条错误备选路线：Telethon 的 `resolve_bot_file_id` 对现行 file_id 格式（version 4）返回 `None`，故**不能**改走 Bot API 的 file_id 下载。

@@ -2407,55 +2407,42 @@ class DownloadQueue:
             counter += 1
         return os.path.join(target_dir, candidate), candidate
 
-    async def enqueue_tg_media(
-        self,
-        *,
-        file_name: str,
-        source_message_id=None,
-        chat_id=None,
-        is_image: bool = False,
-    ):
-        """把已落盘的 TG 媒体登记为一条已完成记录（不做任何下载动作）。
-
-        file_name 是 allocate_tg_media_path 返回的最终文件名，所在目录由 Config
-        的 TG_MEDIA_DIR 决定。本方法只负责造 DownloadInfo、发 added/completed
-        事件，使它出现在 Web 完成列表并可被「Telegram」筛选。返回该条目或 None。
-        """
-        if not file_name:
-            return None
-        basename = os.path.basename(str(file_name))
-        region = self.tg_media_region()
-        # 与其它下载一致：filename 只存「相对下载目录」的文件名，子目录由 folder
-        # 单独承载；前端 buildDownloadLink 会拼成 download/<folder>/<filename>。
+    def _tg_media_descriptor(self, basename: str, is_image: bool) -> tuple[str, str]:
+        """按类型给出 TG 条目的 (download_type, format)。"""
+        if is_image:
+            return 'images', 'jpg'
         _stem, ext_raw = os.path.splitext(basename)
         ext = ext_raw.lstrip('.').lower()
+        if ext in self._TG_VIDEO_EXTS:
+            return 'video', ext or 'mp4'
+        return 'document', ext or 'bin'
 
-        if is_image:
-            dl_type = 'images'
-        elif ext in self._TG_VIDEO_EXTS:
-            dl_type = 'video'
-        else:
-            dl_type = 'document'
-
-        # URL 必须唯一且不能含 '/'：它既是完成队列的 key，也会被前端当作列表列名。
+    def _new_tg_media_url(self, chat_id, source_message_id) -> str:
+        """生成 TG 条目的唯一 URL（也是完成队列的 key，不能含 '/'）。"""
         if chat_id is not None and source_message_id is not None:
-            fake_url = f'tg://{chat_id}_{source_message_id}'
+            url = f'tg://{chat_id}_{source_message_id}'
         else:
-            fake_url = f'tg://{_sanitize_path_component(str(time.time_ns()))}'
+            url = f'tg://{_sanitize_path_component(str(time.time_ns()))}'
         # 同一消息正常只登记一次；万一重复（如用户重发同一文件），退到时间戳，
         # 避免覆盖已有记录。
-        if self.done.exists(fake_url):
-            fake_url = f'tg://{_sanitize_path_component(str(time.time_ns()))}'
+        if self.done.exists(url) or self.queue.exists(url):
+            url = f'tg://{_sanitize_path_component(str(time.time_ns()))}'
+        return url
 
+    def build_tg_media_entry(self, *, file_name, source_message_id=None,
+                             chat_id=None, is_image: bool = False):
+        """造一条 TG 媒体的 DownloadInfo（尚未广播）。返回 (info, abs_path)。"""
+        abs_path, basename = self.allocate_tg_media_path(file_name)
+        dl_type, fmt = self._tg_media_descriptor(basename, is_image)
         info = DownloadInfo(
             id=f'tg-{_sanitize_path_component(str(time.time_ns()))}',
             title=basename,
-            url=fake_url,
+            url=self._new_tg_media_url(chat_id, source_message_id),
             quality='best',
             download_type=dl_type,
             codec='auto',
-            format=ext or 'bin',
-            folder=region,
+            format=fmt,
+            folder=self.tg_media_region(),
             custom_name_prefix='',
             error=None,
             entry=None,
@@ -2469,25 +2456,80 @@ class DownloadQueue:
             uploader='',
             upload_date='',
         )
+        return info, abs_path
+
+    async def begin_tg_media(self, *, file_name, source_message_id=None,
+                             chat_id=None, is_image: bool = False):
+        """建立 'pending' 条目并广播 added，返回 (info, abs_path)。
+
+        与「下完才登记」不同：先把条目挂上网页再下载，大文件传输期间能看到进度，
+        失败也会在完成列表留一条 error 记录，而不是只在聊天里报一句就消失。
+        """
+        info, abs_path = self.build_tg_media_entry(
+            file_name=file_name, source_message_id=source_message_id,
+            chat_id=chat_id, is_image=is_image)
+        info.status = 'pending'
+        info.percent = 0.0
+        info.msg = '等待下载'
+        if self.notifier is not None:
+            await self.notifier.added(info)
+        return info, abs_path
+
+    async def update_tg_media(self, info):
+        """广播一条 TG 条目的进度更新（调用方先设好 percent/size/msg）。"""
+        if self.notifier is not None:
+            await self.notifier.updated(info)
+
+    async def finish_tg_media(self, info, abs_path):
+        """登记一条已下载完成的 TG 媒体并广播 completed。"""
         info.status = 'finished'
         info.percent = 100
-        info.filename = basename
+        info.filename = os.path.basename(abs_path)
         info.msg = 'Telegram 媒体已归档'
         # 记录真实文件大小；拿不到也不影响登记。
         try:
-            info.size = os.path.getsize(
-                os.path.join(self.config.DOWNLOAD_DIR, region, basename))
+            info.size = os.path.getsize(abs_path)
         except OSError:
             info.size = None
-
         await self.done.put(Download(None, None, None, None, info.quality, info.format, {}, info))
-        # 先 added 再 completed，与 yt-dlp 下载的消息顺序一致：'completed' 会把行
-        # 从队列搬进完成列表（前端对没有对应 added 的 'updated' 会丢弃，这里不涉）。
         if self.notifier is not None:
-            await self.notifier.added(info)
             await self.notifier.completed(info)
-        log.info('Telegram 媒体已归档: %s -> %s/%s', basename, region, basename)
+        log.info('Telegram 媒体已归档: %s', info.filename)
         return info
+
+    async def fail_tg_media(self, info, error):
+        """登记一条失败的 TG 媒体并广播 completed，使失败在网页上可见。"""
+        info.status = 'error'
+        info.error = str(error)
+        info.msg = str(error)
+        info.percent = None
+        # 失败不指向半截文件：清掉 filename，避免网页渲染出打不开的链接。
+        info.filename = None
+        await self.done.put(Download(None, None, None, None, info.quality, info.format, {}, info))
+        if self.notifier is not None:
+            await self.notifier.completed(info)
+        log.warning('Telegram 媒体失败: %s (%s)', info.title, error)
+        return info
+
+    async def enqueue_tg_media(
+        self,
+        *,
+        file_name: str,
+        source_message_id=None,
+        chat_id=None,
+        is_image: bool = False,
+    ):
+        """兼容入口：已落盘的媒体一步完成「建立 + 完成」登记。返回条目或 None。
+
+        实时下载路径请改用 begin_tg_media / update_tg_media / finish_tg_media，
+        以便下载期间上报进度、失败时登记 error 条目。
+        """
+        if not file_name:
+            return None
+        info, abs_path = await self.begin_tg_media(
+            file_name=file_name, source_message_id=source_message_id,
+            chat_id=chat_id, is_image=is_image)
+        return await self.finish_tg_media(info, abs_path)
 
     async def add(
         self,

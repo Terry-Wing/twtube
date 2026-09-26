@@ -1,5 +1,6 @@
 import os
 import re
+import html
 import asyncio
 import contextlib
 import logging
@@ -26,6 +27,8 @@ _TELETHON_RETRY_DELAY = 30       # Telethon 断开后重建前的等待
 _TELETHON_HEALTH_INTERVAL = 30   # Telethon 健康检查间隔
 # 单次媒体下载的兜底超时：正常完成会自行结束，这个只用于避免任务永久悬挂。
 _TG_MEDIA_DOWNLOAD_TIMEOUT = 3600
+# 进度上报节流：Telethon 回调很密集，每 1s 广播一次足够网页进度条平滑。
+_TG_PROGRESS_INTERVAL = 1.0
 
 import time
 
@@ -92,6 +95,8 @@ class TelegramBotManager:
         # 相册（media group）聚合：Telegram 会把一组图片拆成多条消息推送，
         # 这里把同组附件收集起来一次性登记，避免相册被拆成多条完成记录。
         self._albums: dict[str, dict] = {}
+        # 在途下载计数：传输期间健康检查不得断开连接（详见 _run_mtproto）。
+        self._active_downloads = 0
 
     def _record_msg_context(self, url: str, chat_id: str, message_id: int):
         if not url:
@@ -260,13 +265,17 @@ class TelegramBotManager:
             self._buffer_album_member(update, str(media_group_id))
             return
 
-        ok, note = await self._fetch_and_register(
+        ok, detail = await self._fetch_and_register(
             message_id=message.message_id,
             chat_id=chat_id,
             is_image=bool(message.photo),
         )
+        if ok:
+            reply = detail
+        else:
+            reply = f"❌ 媒体处理失败：<code>{html.escape(str(detail))[:300]}</code>"
         with contextlib.suppress(Exception):
-            await message.reply_text(note, parse_mode="HTML")
+            await message.reply_text(reply, parse_mode="HTML")
 
     def _buffer_album_member(self, update: Update, media_group_id: str):
         """相册成员到达：入缓冲；每个成员到达会重置静默计时，静默 1.5s 后整组处理。"""
@@ -274,14 +283,18 @@ class TelegramBotManager:
         if bucket is None:
             bucket = {
                 'chat_id': str(update.effective_chat.id),
-                'members': [],          # [(message_id, is_image)]
+                'members': [],          # [(message_id, is_image, name_hint)]
                 'timer': None,
                 'reply_to': None,
             }
             self._albums[media_group_id] = bucket
 
         message = update.message
-        bucket['members'].append((message.message_id, bool(message.photo)))
+        bucket['members'].append((
+            message.message_id,
+            bool(message.photo),
+            self._message_name_hint(message),
+        ))
         if bucket['reply_to'] is None:
             bucket['reply_to'] = message
 
@@ -306,86 +319,165 @@ class TelegramBotManager:
         if bucket.get('timer') is not None:
             bucket['timer'].cancel()
 
-        saved, failed = 0, 0
-        for message_id, is_image in bucket['members']:
+        saved, failures = 0, []
+        for message_id, is_image, name_hint in bucket['members']:
             try:
-                ok, _ = await self._fetch_and_register(
+                ok, detail = await self._fetch_and_register(
                     message_id=message_id,
                     chat_id=bucket['chat_id'],
                     is_image=is_image,
+                    name_hint=name_hint,
                 )
-                if ok:
-                    saved += 1
-                else:
-                    failed += 1
             except Exception as exc:
-                failed += 1
+                ok, detail = False, str(exc)
                 log.exception('相册附件处理失败 msg=%s: %s', message_id, exc)
+            if ok:
+                saved += 1
+            else:
+                failures.append((name_hint, str(detail)))
 
         reply_to = bucket.get('reply_to')
         if reply_to is not None:
-            note = f"✅ 相册已归档 {saved} 项" + (f"，失败 {failed} 项" if failed else "")
+            lines = [f"✅ 相册已归档 {saved} 项"]
+            if failures:
+                lines.append(f"❌ 失败 {len(failures)} 项：")
+                for name_hint, reason in failures:
+                    lines.append(
+                        f"• <code>{html.escape(str(name_hint))[:60]}</code>\n"
+                        f"   {html.escape(reason)[:200]}"
+                    )
             with contextlib.suppress(Exception):
-                await reply_to.reply_text(note, parse_mode="HTML")
+                await reply_to.reply_text("\n".join(lines), parse_mode="HTML")
 
-    async def _fetch_and_register(self, *, message_id, chat_id, is_image: bool) -> tuple[bool, str]:
-        """下载一个附件并登记为完成记录；返回 (是否成功, 回复文案)。"""
-        try:
-            basename = await self._download_media(message_id, chat_id)
-        except Exception as exc:
-            log.exception('TG 媒体下载失败 msg=%s: %s', message_id, exc)
-            return False, f"❌ 媒体下载失败: {exc}"
+    async def _fetch_and_register(self, *, message_id, chat_id, is_image: bool,
+                                  name_hint: str | None = None) -> tuple[bool, str]:
+        """下载一个附件并登记；成功返回 (True, 成功文案)，失败返回 (False, 失败原因)。
 
+        失败时同样往完成列表写一条 error 记录，使它和 yt-dlp 的失败一样在网页可见，
+        而不是只在聊天里回一句就消失。
+        """
+        info = None
+        abs_path = None
         try:
-            info = await self.dqueue.enqueue_tg_media(
-                file_name=basename,
+            message = await self._resolve_message(message_id, chat_id)
+            if name_hint is None:
+                name_hint = self._media_name_hint(message)
+            info, abs_path = await self.dqueue.begin_tg_media(
+                file_name=name_hint,
                 source_message_id=message_id,
                 chat_id=chat_id,
                 is_image=is_image,
             )
+            # 传输期间置位：健康检查看到在途下载就不做断开判定。
+            self._active_downloads += 1
+            try:
+                await self._download_media(message, info, abs_path)
+            finally:
+                self._active_downloads -= 1
+            await self.dqueue.finish_tg_media(info, abs_path)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            log.exception('TG 媒体登记失败 msg=%s: %s', message_id, exc)
-            return False, f"❌ 媒体登记失败: {exc}"
-
-        if info is None:
-            return False, "⚠️ 未能识别有效的文件名，已跳过。"
+            log.exception('TG 媒体处理失败 msg=%s: %s', message_id, exc)
+            # 丢掉半截文件：留着会既占空间、又可能被误当成完整文件。
+            self._discard_partial(abs_path)
+            if info is not None:
+                with contextlib.suppress(Exception):
+                    await self.dqueue.fail_tg_media(info, exc)
+            return False, str(exc)
 
         size_txt = ''
         if info.size:
             size_txt = f"\n💾 大小: <code>{self._human_size(info.size)}</code>"
         return True, (
             f"✅ 已归档到 TwTube\n"
-            f"📁 目录: <code>{info.folder}</code>\n"
-            f"🎬 文件: <code>{info.title}</code>{size_txt}"
+            f"📁 目录: <code>{html.escape(str(info.folder))}</code>\n"
+            f"🎬 文件: <code>{html.escape(str(info.title))}</code>{size_txt}"
         )
 
-    async def _download_media(self, message_id, chat_id) -> str:
-        """经 MTProto 按 chat/message id 下载原始媒体，返回最终落盘文件名。
-
-        注意两条实测踩过的坑（2026-09-26）：
-        1. `download_media` **没有** `timeout` 参数，传了会直接 TypeError；
-        2. bot 不能用聊天历史接口（get_messages 不带 ids 会抛 BotMethodInvalidError），
-           但 `get_messages(peer, ids=<单条>)` 是允许的，且能拿到真实 file_reference。
-           不要改走 Bot API 的 file_id —— Telethon 的 resolve_bot_file_id 对现行
-           file_id 格式（version 4）会返回 None。
-        """
+    async def _resolve_message(self, message_id, chat_id):
+        """按 chat/message id 取出那条消息（用于取文件名并下载）。"""
         if self.tg_client is None:
             raise RuntimeError('MTProto 客户端未就绪')
-
         entity = await self.tg_client.get_entity(int(chat_id))
         message = await self.tg_client.get_messages(entity, ids=int(message_id))
         if message is None or message.media is None:
             raise RuntimeError('消息中没有可下载的媒体')
+        return message
 
-        # 先按原名分配一个唯一路径，再把该具体路径交给 Telethon：这样落盘名与
-        # 登记进完成列表的 filename 完全一致，完成列表里的文件链接才能命中真实文件。
-        abs_path, _basename = self.dqueue.allocate_tg_media_path(self._media_name_hint(message))
+    async def _download_media(self, message, info, abs_path) -> str:
+        """把媒体下载到已分配的具体路径，期间上报进度；失败即抛异常。
+
+        注意三条实测踩过的坑（2026-09-26）：
+        1. `download_media` **没有** `timeout` 参数，传了会直接 TypeError；
+        2. bot 不能用聊天历史接口（get_messages 不带 ids 会抛 BotMethodInvalidError），
+           但 `get_messages(peer, ids=<单条>)` 是允许的，且能拿到真实 file_reference。
+           不要改走 Bot API 的 file_id —— Telethon 的 resolve_bot_file_id 对现行
+           file_id 格式（version 4）会返回 None；
+        3. 传输中途若连接被断开，download_media 会**静默返回 None** 并留下半截文件，
+           既不报错也不重试。所以这里必须把「返回假值」当成失败，并校验最终字节数。
+        """
+        if self.tg_client is None:
+            raise RuntimeError('MTProto 客户端未就绪')
+
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        path = await self.tg_client.download_media(message, file=abs_path)
-        if not path:
-            raise RuntimeError('Telethon 未返回文件路径')
-        log.info('TG 媒体已落盘: %s', path)
-        return os.path.basename(path)
+        doc = getattr(message, 'document', None)
+        expected = getattr(doc, 'size', None) if doc is not None else None
+
+        last_update = [0.0]
+
+        async def _progress(current, total_bytes):
+            now = time.monotonic()
+            if now - last_update[0] < _TG_PROGRESS_INTERVAL:
+                return
+            last_update[0] = now
+            total = total_bytes or expected
+            info.status = 'downloading'
+            if total:
+                info.percent = round(current * 100.0 / total, 1)
+                info.size = total
+                info.msg = f'已下载 {self._human_size(current)} / {self._human_size(total)}'
+            else:
+                info.msg = f'已下载 {self._human_size(current)}'
+            # 进度上报失败不能拖垮下载本身。
+            with contextlib.suppress(Exception):
+                await self.dqueue.update_tg_media(info)
+
+        try:
+            path = await asyncio.wait_for(
+                self.tg_client.download_media(
+                    message, file=abs_path, progress_callback=_progress),
+                timeout=_TG_MEDIA_DOWNLOAD_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(f'下载超时（超过 {_TG_MEDIA_DOWNLOAD_TIMEOUT // 60} 分钟）')
+
+        # 以磁盘上的真实字节数为准，而不是 download_media 的返回值：连接恰好在
+        # 文件落盘那一刻被断开时，它会返回 None，但文件其实是完整的——只看返回
+        # 值会把这种「其实成功了」误报成失败，并把好文件删掉。
+        got = os.path.getsize(abs_path) if os.path.exists(abs_path) else 0
+        if expected:
+            if got != expected:
+                raise RuntimeError(
+                    f'文件不完整（{self._human_size(got)}/{self._human_size(expected)}）')
+        elif not path or not got:
+            # 拿不到预期大小时无法核对字节数，退回到「返回了路径且确有内容」。
+            raise RuntimeError('下载中断，未收到完整文件（连接可能被断开）')
+        log.info('TG 媒体已落盘: %s', abs_path)
+        return os.path.basename(abs_path)
+
+    @staticmethod
+    def _discard_partial(abs_path):
+        """下载失败后清掉半截文件（不存在则忽略）。"""
+        if not abs_path:
+            return
+        with contextlib.suppress(OSError):
+            os.remove(abs_path)
+
+    @staticmethod
+    def _message_name_hint(message) -> str:
+        """取 Telegram 文件原名的入口（供相册提前记录名字）。"""
+        return TelegramBotManager._media_name_hint(message)
 
     @staticmethod
     def _media_name_hint(message) -> str:
@@ -414,7 +506,6 @@ class TelegramBotManager:
                 return f"{int(num)} B" if unit == 'B' else f"{num:.1f} {unit}"
             num /= 1024
         return f"{num:.1f} TB"
-    # ===================== 完成/失败通知（Bot API） =====================
 
     async def send_notification(self, text: str, dl=None):
         """用于下载完成后的回传通知，支持引用触发下载的原消息"""
@@ -581,6 +672,12 @@ class TelegramBotManager:
                 log.info("Telegram MTProto client started (media capture enabled).")
                 while True:
                     await asyncio.sleep(_TELETHON_HEALTH_INTERVAL)
+                    # 有下载在途时不判定断线：download_media 传输期间若被
+                    # disconnect()，它会静默返回 None 并留下半截文件，既不报错
+                    # 也不重试——大文件（图片的万倍）正好落在多个检查窗口里，
+                    # 这就是「相册图片全成功、视频失败」的成因。等传输结束再查。
+                    if self._active_downloads > 0:
+                        continue
                     if not client.is_connected():
                         raise RuntimeError('MTProto 连接已断开')
             except asyncio.CancelledError:
