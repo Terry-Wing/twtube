@@ -402,7 +402,7 @@ class TelegramBotManager:
 
             edit_state = [0.0]
 
-            async def _on_progress(current, total):
+            async def _on_progress(current, total, speed=None, eta=None):
                 if status_msg is None:
                     return
                 now = time.monotonic()
@@ -413,6 +413,10 @@ class TelegramBotManager:
                     body = f"{self._human_size(current)} / {self._human_size(total)}（{current * 100.0 / total:.0f}%）"
                 else:
                     body = self._human_size(current)
+                if speed and speed > 0:
+                    body += f"　🚀 {self._human_size(speed)}/s"
+                if eta is not None and eta > 0:
+                    body += f"　⏱ 剩余 {self._human_eta(eta)}"
                 await self._edit_status(
                     status_msg,
                     f"⏳ 正在下载：<code>{html.escape(str(name_hint))}</code>\n"
@@ -503,9 +507,25 @@ class TelegramBotManager:
         expected = getattr(doc, 'size', None) if doc is not None else None
 
         last_update = [0.0]
+        # 速度/剩余时间估计：Telethon 的进度回调只给「累计已下载字节数」，不提供
+        # 速度。这里用相邻两次回调的「字节差 / 时间差」求瞬时速度，再做指数平滑抹掉
+        # 抖动；有总大小且速度为正时即可推 ETA。yt-dlp 那条通道由 yt-dlp 自己填
+        # speed/eta，这里补齐 TG 通道，让网页的「下载速度/剩余时间」两列一致。
+        speed_state = {'t': None, 'bytes': 0, 'speed': None}
 
         async def _progress(current, total_bytes):
             now = time.monotonic()
+            # 速度样本在每次回调都更新（不受下面的上报节流影响，样本更密、更准）。
+            st = speed_state
+            if st['t'] is not None:
+                dt = now - st['t']
+                db = current - st['bytes']
+                if dt > 0 and db >= 0:
+                    instant = db / dt
+                    st['speed'] = instant if st['speed'] is None else 0.7 * st['speed'] + 0.3 * instant
+            st['t'] = now
+            st['bytes'] = current
+
             if now - last_update[0] < _TG_PROGRESS_INTERVAL:
                 return
             last_update[0] = now
@@ -517,12 +537,20 @@ class TelegramBotManager:
                 info.msg = f'已下载 {self._human_size(current)} / {self._human_size(total)}'
             else:
                 info.msg = f'已下载 {self._human_size(current)}'
+            # 速度样本有效才填；否则留空（前端 speed/eta 管道对 <=0 显示为空）。
+            speed = st['speed']
+            eta = None
+            if speed and speed > 0:
+                info.speed = speed
+                if total and current < total:
+                    eta = (total - current) / speed
+                    info.eta = eta
             # 进度上报失败不能拖垮下载本身。
             with contextlib.suppress(Exception):
                 await self.dqueue.update_tg_media(info)
             if on_progress is not None:
                 with contextlib.suppress(Exception):
-                    await on_progress(current, total)
+                    await on_progress(current, total, speed, eta)
 
         try:
             path = await asyncio.wait_for(
@@ -575,6 +603,21 @@ class TelegramBotManager:
         if getattr(message, 'photo', None) is not None:
             return f'tg_photo_{getattr(message, "id", "x")}.jpg'
         return f'tg_media_{getattr(message, "id", "x")}'
+
+    @staticmethod
+    def _human_eta(seconds) -> str:
+        """把剩余秒数写成中文可读形式（网页那两列由前端 pipe 负责，这里给聊天用）。"""
+        try:
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            return str(seconds)
+        if seconds < 60:
+            return f"{round(seconds)} 秒"
+        if seconds < 3600:
+            return f"{int(seconds // 60)} 分 {round(seconds % 60)} 秒"
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours} 小时 {minutes} 分"
 
     @staticmethod
     def _human_size(num) -> str:

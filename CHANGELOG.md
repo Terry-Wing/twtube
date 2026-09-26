@@ -42,7 +42,8 @@
 
 ## 🕒 历史变更记录
 
-### 2026-09-26（第三轮）
+### 2026-09-26（第四轮）
+- **fix(TG)**: 补齐 TG 采集的「下载速度」与「剩余时间」。网页这两列读的是 `download.speed`（字节/秒）和 `download.eta`（秒），而 TG 通道原先只填了 `percent`/`size`/`msg`，从没算过这两个值，因而为空。现在用相邻两次进度回调的「字节差 / 时间差」求瞬时速度并做指数平滑（α=0.3），有总大小时再推 ETA（`app/tg_bot.py::_download_media`）；聊天里的「正在下载」提示也一并显示速度与剩余时间。yt-dlp 那条通道由 yt-dlp 自行填这两列，本次补齐后两者表现一致。
 - **fix(TG)**: 补齐 TG 媒体的类型判定。原先只有一张 12 项扩展名白名单（`_TG_VIDEO_EXTS`）决定条目算「视频」还是「Document」，`rmvb`/`m2ts`/`ogv` 这类真视频会被误标成 Document。现改为**扩展名名单与 Telegram 自带类型（`message.video`/`audio`/`voice`）取并集**：名单兜底常见容器（补至 32 种视频 + 15 种音频），而 Telegram 的权威标注能救回**无扩展名或冷门容器**的视频。这只影响网页类型列显示，不影响登记或落盘（`app/ytdl.py::_tg_media_descriptor`/`build_tg_media_entry`，`app/tg_bot.py::_fetch_and_register`）。
   - 说明：本轮用户反馈「是不是只补了 mov」，实为误解——上一轮的修复是对 TG 条目**整个跳过** `get_format()` 校验，任何扩展名都能登记；本轮是进一步修正**类型标注**的正确性。实测 26 种格式全部登记成功、零崩溃。
 - **fix(TG)**: 修复「视频下载成功也不进网页」的真凶：`Download.__init__` 对 TG 条目也调 `get_format()`，而 Telegram 给的是**真实扩展名**（如 `mov`），不在 yt-dlp 认可的 `any/mp4/ios` 里，直接抛 `ValueError: Unknown video format mov`，把「登记」整步炸掉——**图片走 `images` 类型有豁免，视频没有**，所以表现为「相册里图片全有、视频没有」。现用 `tg://` 前缀识别 TG 条目、跳过格式解析（`app/ytdl.py::Download.__init__`）。
