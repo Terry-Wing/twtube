@@ -42,7 +42,13 @@
 
 ## 🕒 历史变更记录
 
-### 2026-09-26
+### 2026-09-26（第三轮）
+- **fix(TG)**: 补齐 TG 媒体的类型判定。原先只有一张 12 项扩展名白名单（`_TG_VIDEO_EXTS`）决定条目算「视频」还是「Document」，`rmvb`/`m2ts`/`ogv` 这类真视频会被误标成 Document。现改为**扩展名名单与 Telegram 自带类型（`message.video`/`audio`/`voice`）取并集**：名单兜底常见容器（补至 32 种视频 + 15 种音频），而 Telegram 的权威标注能救回**无扩展名或冷门容器**的视频。这只影响网页类型列显示，不影响登记或落盘（`app/ytdl.py::_tg_media_descriptor`/`build_tg_media_entry`，`app/tg_bot.py::_fetch_and_register`）。
+  - 说明：本轮用户反馈「是不是只补了 mov」，实为误解——上一轮的修复是对 TG 条目**整个跳过** `get_format()` 校验，任何扩展名都能登记；本轮是进一步修正**类型标注**的正确性。实测 26 种格式全部登记成功、零崩溃。
+- **fix(TG)**: 修复「视频下载成功也不进网页」的真凶：`Download.__init__` 对 TG 条目也调 `get_format()`，而 Telegram 给的是**真实扩展名**（如 `mov`），不在 yt-dlp 认可的 `any/mp4/ios` 里，直接抛 `ValueError: Unknown video format mov`，把「登记」整步炸掉——**图片走 `images` 类型有豁免，视频没有**，所以表现为「相册里图片全有、视频没有」。现用 `tg://` 前缀识别 TG 条目、跳过格式解析（`app/ytdl.py::Download.__init__`）。
+  - 之所以第一轮没发现：旧代码里下载总是先失败，根本走不到登记这步；这次用**真实 socket 链路**（非桩）测试才暴露出来。
+- **feat(TG)**: 机器人现在会先回一条「⏳ 正在下载：<文件名>（大小）」，并**就地更新**为进度（`已下载 x / y（z%）`，节流 5s，遵守 Telegram edit 频率限制），完成后同一条消息改成「✅ 已归档」，失败则改成「❌ 处理失败 + 原因」——全程只占一条消息，不刷屏（`app/tg_bot.py::_reply_status`/`_edit_status`）。相册同样先发一条状态消息再逐项更新。
+- **fix(TG)**: 修复「网页进度只在发起它的那个标签页可见」：TG 采集不经过 `queue`，下载中的条目原先只存在于那次 `added` 广播里，**页面一刷新或换设备重连（收到 socket `all`）就消失**。现在下载中的 TG 条目挂在 `_tg_active` 并并入 `get()` 快照，刷新后进度行仍在；完成/失败时摘除，避免与完成列表重复（`app/ytdl.py::_tg_active`/`get()`/`begin_tg_media`/`finish_tg_media`/`fail_tg_media`）。
 - **fix(TG)**: 修复媒体采集「网页看不到进度、失败无声消失」——大文件下载期间现在会上报进度，失败也会在完成列表留一条 `error` 记录（`app/tg_bot.py::_download_media`/`_fetch_and_register`，`app/ytdl.py::begin_tg_media`/`update_tg_media`/`finish_tg_media`/`fail_tg_media`）。
   - 原来只有「下完才登记」：下载中途网页无任何反馈，失败只在聊天回一句、从不进完成列表，所以视频失败在网页上完全不可见；现在先建 `pending` 条目再下载，期间按 Telethon `progress_callback` 广播 `updated`（节流 1s），使进度条与其它平台一致。
   - 实测出真正的失败机制：**传输中若连接被断开，`download_media` 会静默返回 `None` 并留下半截文件**，既不抛异常也不重试。因此把「返回假值」判为失败，并校验最终字节数与 `document.size` 一致；失败时清掉半截文件，避免占空间或被误当完整文件。

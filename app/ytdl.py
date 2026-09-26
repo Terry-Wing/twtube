@@ -852,21 +852,31 @@ class Download:
         self.allow_private = allow_private
         self.tag_video_info = tag_video_info
         self.info = info
-        self.format = get_format(
-            getattr(info, 'download_type', 'video'),
-            getattr(info, 'codec', 'auto'),
-            format,
-            quality,
-        )
-        self.ytdl_opts = get_opts(
-            getattr(info, 'download_type', 'video'),
-            getattr(info, 'codec', 'auto'),
-            format,
-            quality,
-            ytdl_opts,
-            subtitle_language=getattr(info, 'subtitle_language', 'en'),
-            subtitle_mode=getattr(info, 'subtitle_mode', 'prefer_manual'),
-        )
+        # TG 采集的媒体不由 yt-dlp 下载，Download 只作载体（占并发槽位）。它的
+        # format 是 Telegram 给的**真实扩展名**（mov/mkv/…），未必落在 yt-dlp
+        # 认可的集合里 —— 直接走 get_format 会抛 "Unknown video format mov"，
+        # 把「登记」整步炸掉，于是下载成功的视频在网页上永远不出现。用 tg:// 前缀
+        # 识别这些条目（前端与消息上下文也用它），跳过格式解析。
+        is_tg_media = isinstance(getattr(info, 'url', None), str) and info.url.startswith('tg://')
+        if is_tg_media:
+            self.format = 'best'
+            self.ytdl_opts = {}
+        else:
+            self.format = get_format(
+                getattr(info, 'download_type', 'video'),
+                getattr(info, 'codec', 'auto'),
+                format,
+                quality,
+            )
+            self.ytdl_opts = get_opts(
+                getattr(info, 'download_type', 'video'),
+                getattr(info, 'codec', 'auto'),
+                format,
+                quality,
+                ytdl_opts,
+                subtitle_language=getattr(info, 'subtitle_language', 'en'),
+                subtitle_mode=getattr(info, 'subtitle_mode', 'prefer_manual'),
+            )
         if "impersonate" in self.ytdl_opts:
             self.ytdl_opts["impersonate"] = yt_dlp.networking.impersonate.ImpersonateTarget.from_str(self.ytdl_opts["impersonate"])
         self.canceled = False
@@ -1467,6 +1477,9 @@ class DownloadQueue:
         self._live_monitor_wakeup = asyncio.Event()
         # 抖音直连下载的进行中任务，按 URL 索引，用于取消支持。
         self._douyin_tasks: dict[str, asyncio.Task] = {}
+        # TG 采集不经过 queue：下载中的条目挂在这里，供 get() 并入快照，
+        # 使页面刷新/重连时进行中的进度行仍然可见（详见 get()）。
+        self._tg_active: dict[str, DownloadInfo] = {}
 
     def cancel_add(self):
         self._add_generation += 1
@@ -2372,8 +2385,23 @@ class DownloadQueue:
     # ===== Telegram 媒体采集（视频/图片文件，非 yt-dlp 下载） =====
 
     # 这些后缀走“视频”路径；其余文档（压缩包等）一律当普通文件处理。
+    # 只影响条目在网页上的类型标注（视频 / Document），不影响能否登记或落盘 ——
+    # TG 条目本身不走 get_format 校验。名单按「常见容器 + 广播/光碟/手机录制」补齐，
+    # 免得 .rmvb/.m2ts 这类真视频被标成 Document。
     _TG_VIDEO_EXTS = frozenset({
-        'mp4', 'mkv', 'mov', 'webm', 'avi', 'flv', 'wmv', 'm4v', 'ts', 'mpg', 'mpeg', '3gp',
+        # 常见网络容器
+        'mp4', 'mkv', 'mov', 'webm', 'avi', 'flv', 'wmv', 'm4v', '3gp',
+        # MPEG 家族与广播流
+        'ts', 'mpg', 'mpeg', 'm2ts', 'mts', 'm2v', 'mpv', 'mpe', 'm1v',
+        # Ogg / RealMedia / 其它常见容器
+        'ogv', 'ogm', 'rm', 'rmvb', 'asf', '3g2', 'f4v', 'vob', 'divx', 'mxf',
+        # 摄像机 / 老式封装
+        'dv', 'qt', 'mod', 'tod', 'wtv',
+    })
+    # 这些后缀按“音频”标注（同样只影响网页类型列，不影响登记）。
+    _TG_AUDIO_EXTS = frozenset({
+        'mp3', 'm4a', 'aac', 'opus', 'ogg', 'oga', 'flac', 'wav', 'wma',
+        'amr', 'ape', 'mka', 'ac3', 'aiff', 'aif',
     })
     # Telegram 提供的文件名属不可信输入，扩展名只接受这个安全字符集。
     _TG_EXT_RE = re.compile(r'^\.[A-Za-z0-9]{1,10}$')
@@ -2407,14 +2435,24 @@ class DownloadQueue:
             counter += 1
         return os.path.join(target_dir, candidate), candidate
 
-    def _tg_media_descriptor(self, basename: str, is_image: bool) -> tuple[str, str]:
-        """按类型给出 TG 条目的 (download_type, format)。"""
+    def _tg_media_descriptor(self, basename: str, is_image: bool,
+                             is_video=None, is_audio=None) -> tuple[str, str]:
+        """按类型给出 TG 条目的 (download_type, format)。
+
+        优先采纳 Telegram 自带的类型（is_video/is_audio，取自 message.video /
+        message.audio 等属性）——那是权威标注，扩展名只是兜底。两者取“或”：
+        扩展名名单能覆盖 Telegram 没标注的常见容器，而 Telegram 的标注又能救回
+        无扩展名或冷门容器的视频（不会被误标成 Document）。这里只决定网页类型列
+        的显示，不影响能否登记或落盘。
+        """
         if is_image:
             return 'images', 'jpg'
         _stem, ext_raw = os.path.splitext(basename)
         ext = ext_raw.lstrip('.').lower()
-        if ext in self._TG_VIDEO_EXTS:
+        if is_video or ext in self._TG_VIDEO_EXTS:
             return 'video', ext or 'mp4'
+        if is_audio or ext in self._TG_AUDIO_EXTS:
+            return 'audio', ext or 'mp3'
         return 'document', ext or 'bin'
 
     def _new_tg_media_url(self, chat_id, source_message_id) -> str:
@@ -2430,10 +2468,12 @@ class DownloadQueue:
         return url
 
     def build_tg_media_entry(self, *, file_name, source_message_id=None,
-                             chat_id=None, is_image: bool = False):
+                             chat_id=None, is_image: bool = False,
+                             is_video=None, is_audio=None):
         """造一条 TG 媒体的 DownloadInfo（尚未广播）。返回 (info, abs_path)。"""
         abs_path, basename = self.allocate_tg_media_path(file_name)
-        dl_type, fmt = self._tg_media_descriptor(basename, is_image)
+        dl_type, fmt = self._tg_media_descriptor(
+            basename, is_image, is_video=is_video, is_audio=is_audio)
         info = DownloadInfo(
             id=f'tg-{_sanitize_path_component(str(time.time_ns()))}',
             title=basename,
@@ -2459,7 +2499,8 @@ class DownloadQueue:
         return info, abs_path
 
     async def begin_tg_media(self, *, file_name, source_message_id=None,
-                             chat_id=None, is_image: bool = False):
+                             chat_id=None, is_image: bool = False,
+                             is_video=None, is_audio=None):
         """建立 'pending' 条目并广播 added，返回 (info, abs_path)。
 
         与「下完才登记」不同：先把条目挂上网页再下载，大文件传输期间能看到进度，
@@ -2467,10 +2508,13 @@ class DownloadQueue:
         """
         info, abs_path = self.build_tg_media_entry(
             file_name=file_name, source_message_id=source_message_id,
-            chat_id=chat_id, is_image=is_image)
+            chat_id=chat_id, is_image=is_image,
+            is_video=is_video, is_audio=is_audio)
         info.status = 'pending'
         info.percent = 0.0
         info.msg = '等待下载'
+        # 先挂进在途表再广播：即便客户端此刻刷新，get() 也已经能返回这一行。
+        self._tg_active[info.url] = info
         if self.notifier is not None:
             await self.notifier.added(info)
         return info, abs_path
@@ -2491,6 +2535,8 @@ class DownloadQueue:
             info.size = os.path.getsize(abs_path)
         except OSError:
             info.size = None
+        # 先摘掉「下载中」的临时可见项，再写完成列表，避免刷新时同一行两处并存。
+        self._tg_active.pop(info.url, None)
         await self.done.put(Download(None, None, None, None, info.quality, info.format, {}, info))
         if self.notifier is not None:
             await self.notifier.completed(info)
@@ -2505,11 +2551,18 @@ class DownloadQueue:
         info.percent = None
         # 失败不指向半截文件：清掉 filename，避免网页渲染出打不开的链接。
         info.filename = None
+        self._tg_active.pop(info.url, None)
         await self.done.put(Download(None, None, None, None, info.quality, info.format, {}, info))
         if self.notifier is not None:
             await self.notifier.completed(info)
         log.warning('Telegram 媒体失败: %s (%s)', info.title, error)
         return info
+
+    def forget_tg_media(self, info):
+        """摘掉在途 TG 条目（取消等路径的兜底；完成/失败已各自摘除）。"""
+        if info is None:
+            return
+        self._tg_active.pop(getattr(info, 'url', None), None)
 
     async def enqueue_tg_media(
         self,
@@ -2518,6 +2571,8 @@ class DownloadQueue:
         source_message_id=None,
         chat_id=None,
         is_image: bool = False,
+        is_video=None,
+        is_audio=None,
     ):
         """兼容入口：已落盘的媒体一步完成「建立 + 完成」登记。返回条目或 None。
 
@@ -2528,7 +2583,8 @@ class DownloadQueue:
             return None
         info, abs_path = await self.begin_tg_media(
             file_name=file_name, source_message_id=source_message_id,
-            chat_id=chat_id, is_image=is_image)
+            chat_id=chat_id, is_image=is_image,
+            is_video=is_video, is_audio=is_audio)
         return await self.finish_tg_media(info, abs_path)
 
     async def add(
@@ -2812,7 +2868,11 @@ class DownloadQueue:
 
     def get(self):
         return (list((k, v.info) for k, v in self.queue.items()) +
-                list((k, v.info) for k, v in self.pending.items()),
+                list((k, v.info) for k, v in self.pending.items()) +
+                # TG 采集不经过 queue：下载中的条目只挂在 _tg_active 上。并入这里，
+                # 使页面刷新或用另一台设备重连（收到 socket 'all'）时，进行中的
+                # 进度行依旧可见，而不是只在发起它的那个标签页里存在。
+                list(self._tg_active.items()),
                 list((k, v.info) for k, v in self.done.items()))
 
     def close(self):

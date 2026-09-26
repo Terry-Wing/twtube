@@ -29,6 +29,8 @@ _TELETHON_HEALTH_INTERVAL = 30   # Telethon 健康检查间隔
 _TG_MEDIA_DOWNLOAD_TIMEOUT = 3600
 # 进度上报节流：Telethon 回调很密集，每 1s 广播一次足够网页进度条平滑。
 _TG_PROGRESS_INTERVAL = 1.0
+# 「正在下载」状态消息的就地更新节流：Telegram 对 edit_text 有频率限制。
+_TG_STATUS_EDIT_INTERVAL = 5.0
 
 import time
 
@@ -265,17 +267,14 @@ class TelegramBotManager:
             self._buffer_album_member(update, str(media_group_id))
             return
 
-        ok, detail = await self._fetch_and_register(
+        # 单条媒体：立刻回一条「正在下载」，随后就地更新进度与结果。大文件可能
+        # 要十几分钟，先给个回执，用户才知道它在干活，而不是石沉大海。
+        await self._fetch_and_register(
             message_id=message.message_id,
             chat_id=chat_id,
             is_image=bool(message.photo),
+            notify_to=message,
         )
-        if ok:
-            reply = detail
-        else:
-            reply = f"❌ 媒体处理失败：<code>{html.escape(str(detail))[:300]}</code>"
-        with contextlib.suppress(Exception):
-            await message.reply_text(reply, parse_mode="HTML")
 
     def _buffer_album_member(self, update: Update, media_group_id: str):
         """相册成员到达：入缓冲；每个成员到达会重置静默计时，静默 1.5s 后整组处理。"""
@@ -319,8 +318,19 @@ class TelegramBotManager:
         if bucket.get('timer') is not None:
             bucket['timer'].cancel()
 
+        reply_to = bucket.get('reply_to')
+        total = len(bucket['members'])
+        # 相册只发一条状态消息，逐项更新，避免一次相册刷出一屏通知。
+        status_msg = None
+        if reply_to is not None:
+            status_msg = await self._reply_status(
+                reply_to, f"⏳ 正在下载相册（共 {total} 项）…")
+
         saved, failures = 0, []
-        for message_id, is_image, name_hint in bucket['members']:
+        for idx, (message_id, is_image, name_hint) in enumerate(bucket['members'], 1):
+            if status_msg is not None:
+                await self._edit_status(
+                    status_msg, f"⏳ 正在下载相册（{idx}/{total}）…")
             try:
                 ok, detail = await self._fetch_and_register(
                     message_id=message_id,
@@ -336,42 +346,82 @@ class TelegramBotManager:
             else:
                 failures.append((name_hint, str(detail)))
 
-        reply_to = bucket.get('reply_to')
-        if reply_to is not None:
-            lines = [f"✅ 相册已归档 {saved} 项"]
-            if failures:
-                lines.append(f"❌ 失败 {len(failures)} 项：")
-                for name_hint, reason in failures:
-                    lines.append(
-                        f"• <code>{html.escape(str(name_hint))[:60]}</code>\n"
-                        f"   {html.escape(reason)[:200]}"
-                    )
-            with contextlib.suppress(Exception):
-                await reply_to.reply_text("\n".join(lines), parse_mode="HTML")
+        lines = [f"✅ 相册已归档 {saved} 项"]
+        if failures:
+            lines.append(f"❌ 失败 {len(failures)} 项：")
+            for name_hint, reason in failures:
+                lines.append(
+                    f"• <code>{html.escape(str(name_hint))[:60]}</code>\n"
+                    f"   {html.escape(reason)[:200]}"
+                )
+        final = "\n".join(lines)
+        if status_msg is not None:
+            await self._edit_status(status_msg, final)
+        elif reply_to is not None:
+            await self._reply_status(reply_to, final)
 
     async def _fetch_and_register(self, *, message_id, chat_id, is_image: bool,
-                                  name_hint: str | None = None) -> tuple[bool, str]:
+                                  name_hint: str | None = None,
+                                  notify_to=None) -> tuple[bool, str]:
         """下载一个附件并登记；成功返回 (True, 成功文案)，失败返回 (False, 失败原因)。
 
+        notify_to 不为空时，在其下回复一条「正在下载」并就地更新进度与结果（单条
+        媒体走这条路，用户立刻有反馈）；为空时（如相册成员）由调用方统一汇总。
         失败时同样往完成列表写一条 error 记录，使它和 yt-dlp 的失败一样在网页可见，
         而不是只在聊天里回一句就消失。
         """
         info = None
         abs_path = None
+        status_msg = None
         try:
             message = await self._resolve_message(message_id, chat_id)
             if name_hint is None:
                 name_hint = self._media_name_hint(message)
+
+            # Telegram 自带的权威媒体类型（比扩展名可靠）：用于网页类型列，
+            # 救回无扩展名或冷门容器的视频，避免被误标成 Document。
+            is_video = bool(getattr(message, 'video', None)) or bool(getattr(message, 'video_note', None))
+            is_audio = bool(getattr(message, 'audio', None)) or bool(getattr(message, 'voice', None))
+
+            if notify_to is not None:
+                doc = getattr(message, 'document', None)
+                size = getattr(doc, 'size', None) if doc is not None else None
+                size_txt = f"（{self._human_size(size)}）" if size else ''
+                status_msg = await self._reply_status(
+                    notify_to,
+                    f"⏳ 正在下载：<code>{html.escape(str(name_hint))}</code>{size_txt}")
+
             info, abs_path = await self.dqueue.begin_tg_media(
                 file_name=name_hint,
                 source_message_id=message_id,
                 chat_id=chat_id,
                 is_image=is_image,
+                is_video=is_video,
+                is_audio=is_audio,
             )
-            # 传输期间置位：健康检查看到在途下载就不做断开判定。
+
+            edit_state = [0.0]
+
+            async def _on_progress(current, total):
+                if status_msg is None:
+                    return
+                now = time.monotonic()
+                if now - edit_state[0] < _TG_STATUS_EDIT_INTERVAL:
+                    return
+                edit_state[0] = now
+                if total:
+                    body = f"{self._human_size(current)} / {self._human_size(total)}（{current * 100.0 / total:.0f}%）"
+                else:
+                    body = self._human_size(current)
+                await self._edit_status(
+                    status_msg,
+                    f"⏳ 正在下载：<code>{html.escape(str(name_hint))}</code>\n"
+                    f"📥 {body}")
+
+            # 传输期间置位：健康检查看到在途下载就不做断开判定（见 _run_mtproto）。
             self._active_downloads += 1
             try:
-                await self._download_media(message, info, abs_path)
+                await self._download_media(message, info, abs_path, on_progress=_on_progress)
             finally:
                 self._active_downloads -= 1
             await self.dqueue.finish_tg_media(info, abs_path)
@@ -384,16 +434,44 @@ class TelegramBotManager:
             if info is not None:
                 with contextlib.suppress(Exception):
                     await self.dqueue.fail_tg_media(info, exc)
+            if status_msg is not None:
+                await self._edit_status(
+                    status_msg,
+                    f"❌ 处理失败：<code>{html.escape(str(name_hint or ''))}</code>\n"
+                    f"⚠️ {html.escape(str(exc))[:200]}")
             return False, str(exc)
 
         size_txt = ''
         if info.size:
             size_txt = f"\n💾 大小: <code>{self._human_size(info.size)}</code>"
-        return True, (
+        text = (
             f"✅ 已归档到 TwTube\n"
             f"📁 目录: <code>{html.escape(str(info.folder))}</code>\n"
             f"🎬 文件: <code>{html.escape(str(info.title))}</code>{size_txt}"
         )
+        if status_msg is not None:
+            # 把「正在下载」那条就地改成完成态，不额外多一条消息。
+            await self._edit_status(status_msg, text)
+        return True, text
+
+    async def _reply_status(self, reply_to, text):
+        """在触发消息下回复一条状态消息；失败不拖垮主流程，返回消息对象或 None。"""
+        if reply_to is None:
+            return None
+        try:
+            return await reply_to.reply_text(text, parse_mode="HTML")
+        except Exception as exc:
+            log.warning('发送状态消息失败: %s', exc)
+            return None
+
+    async def _edit_status(self, status_msg, text):
+        """就地更新状态消息；「内容未变」等无害错误直接忽略。"""
+        if status_msg is None:
+            return
+        try:
+            await status_msg.edit_text(text, parse_mode="HTML")
+        except Exception as exc:
+            log.debug('更新状态消息失败: %s', exc)
 
     async def _resolve_message(self, message_id, chat_id):
         """按 chat/message id 取出那条消息（用于取文件名并下载）。"""
@@ -405,7 +483,7 @@ class TelegramBotManager:
             raise RuntimeError('消息中没有可下载的媒体')
         return message
 
-    async def _download_media(self, message, info, abs_path) -> str:
+    async def _download_media(self, message, info, abs_path, on_progress=None) -> str:
         """把媒体下载到已分配的具体路径，期间上报进度；失败即抛异常。
 
         注意三条实测踩过的坑（2026-09-26）：
@@ -442,6 +520,9 @@ class TelegramBotManager:
             # 进度上报失败不能拖垮下载本身。
             with contextlib.suppress(Exception):
                 await self.dqueue.update_tg_media(info)
+            if on_progress is not None:
+                with contextlib.suppress(Exception):
+                    await on_progress(current, total)
 
         try:
             path = await asyncio.wait_for(
