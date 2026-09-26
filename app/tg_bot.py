@@ -248,8 +248,8 @@ class TelegramBotManager:
 
         if self.tg_client is None:
             await message.reply_text(
-                "⚠️ 媒体采集功能未启用：缺少 TG_API_ID / TG_API_HASH 配置。\n"
-                "请到 my.telegram.org 申请后填入环境变量并重启。"
+                "⚠️ 媒体采集未启用或 MTProto 未连接。\n"
+                "请检查 TG_API_ID / TG_API_HASH / TG_PROXY_URL 是否配置正确，并查看容器日志。"
             )
             return
 
@@ -360,7 +360,15 @@ class TelegramBotManager:
         )
 
     async def _download_media(self, message_id, chat_id) -> str:
-        """用 MTProto 按消息自带的文件名下载到 TG_MEDIA_DIR，返回最终文件名。"""
+        """经 MTProto 按 chat/message id 下载原始媒体，返回最终落盘文件名。
+
+        注意两条实测踩过的坑（2026-09-26）：
+        1. `download_media` **没有** `timeout` 参数，传了会直接 TypeError；
+        2. bot 不能用聊天历史接口（get_messages 不带 ids 会抛 BotMethodInvalidError），
+           但 `get_messages(peer, ids=<单条>)` 是允许的，且能拿到真实 file_reference。
+           不要改走 Bot API 的 file_id —— Telethon 的 resolve_bot_file_id 对现行
+           file_id 格式（version 4）会返回 None。
+        """
         if self.tg_client is None:
             raise RuntimeError('MTProto 客户端未就绪')
 
@@ -369,14 +377,11 @@ class TelegramBotManager:
         if message is None or message.media is None:
             raise RuntimeError('消息中没有可下载的媒体')
 
-        # 先按 Telegram 原名分配一个唯一路径，再把**该具体路径**交给 Telethon：
-        # 这样落盘名与登记进完成列表的 filename 完全一致，完成列表里的文件链接
-        # 才能直接命中真实文件（否则 Telethon 自行命名会与登记的记录对不上）。
-        abs_path, _basename = self.dqueue.allocate_tg_media_path(
-            self._media_name_hint(message))
+        # 先按原名分配一个唯一路径，再把该具体路径交给 Telethon：这样落盘名与
+        # 登记进完成列表的 filename 完全一致，完成列表里的文件链接才能命中真实文件。
+        abs_path, _basename = self.dqueue.allocate_tg_media_path(self._media_name_hint(message))
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        # timeout 是单个 RPC 的超时，不覆盖整个文件传输；给够避免中途被掐断。
-        path = await self.tg_client.download_media(message, file=abs_path, timeout=30)
+        path = await self.tg_client.download_media(message, file=abs_path)
         if not path:
             raise RuntimeError('Telethon 未返回文件路径')
         log.info('TG 媒体已落盘: %s', path)

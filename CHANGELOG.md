@@ -43,6 +43,10 @@
 ## 🕒 历史变更记录
 
 ### 2026-09-26
+- **fix(TG)**: 修复媒体采集必然失败——`download_media()` 并不存在 `timeout` 参数，误传后每次调用直接 `TypeError`，表现为转发任何图片/视频都提示失败（`app/tg_bot.py::_download_media`）。
+  - 同时实测确认 bot 账号**不能**用聊天历史接口（`get_messages` 不带 `ids` 会抛 `BotMethodInvalidError`），但 `get_messages(peer, ids=<单条>)` 是允许的且能拿到真实 `file_reference`；据此保留“按 chat/message id 下载”的架构。
+  - 实测否定了一条错误备选路线：Telethon 的 `resolve_bot_file_id` 对现行 file_id 格式（version 4）返回 `None`，故**不能**改走 Bot API 的 file_id 下载。
+  - 真实链路已验证：30MB 文件经 MTProto 下载成功、内容逐字节一致，确认突破 Bot API 20MB 上限。
 - **feat(TG)**: 新增 Telegram 媒体采集——机器人收到的视频/图片/文件自动落盘并登记进完成列表。
   - 走 MTProto（Telethon）下载，突破 Bot API `getFile` 的 20MB 上限，单文件可达 2GB；用同一 bot token 登录，无需手机验证码，只需补 `TG_API_ID`/`TG_API_HASH`（`app/tg_bot.py`、`pyproject.toml`）。
   - 媒体落盘到 `DOWNLOAD_DIR/<TG_MEDIA_DIR>`（默认 `telegram`），文件名来自 Telegram 原名并做路径清洗 + 重名 `_1/_2` 防覆盖；登记记录的 `folder=telegram`、`filename` 仅存文件名，与前端 `download/<folder>/<filename>` 链接拼接一致（`app/ytdl.py::allocate_tg_media_path`/`enqueue_tg_media`）。
