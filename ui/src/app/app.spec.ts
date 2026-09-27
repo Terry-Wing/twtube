@@ -580,6 +580,15 @@ describe('App', () => {
       expect(app.cachedPagedSortedDone.length).toBe(2);
       app.setDonePage(2);
       expect(app.cachedPagedSortedDone.length).toBe(1);
+
+      // Platform Icons
+      expect(app.getPlatformIcon('https://www.douyin.com/video/1')).toBe(app.faDouyin);
+      expect(app.getPlatformIcon('https://youtube.com/watch?v=2')).toBe(app.faYoutube);
+      expect(app.getPlatformIcon('https://bilibili.com/video/av3')).toBe(app.faBilibili);
+      expect(app.getPlatformIcon('https://tiktok.com/@user/video/4')).toBe(app.faTiktok);
+      expect(app.getPlatformIcon('https://instagram.com/p/5')).toBe(app.faInstagram);
+      expect(app.getPlatformIcon('tg://12345_678')).toBe(app.faTelegram);
+      expect(app.getPlatformIcon('https://example.com/test.mp4')).toBe(app.faEllipsis);
     });
   });
 

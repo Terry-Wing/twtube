@@ -42,6 +42,21 @@
 
 ## 🕒 历史变更记录
 
+### 2026-09-27 - 已完成列表平台筛选与列表徽章增加平台专属图标
+- **修改类型**: feat / ui
+- **涉及文件**:
+  - `ui/src/app/app.ts`
+  - `ui/src/app/app.html`
+  - `ui/src/app/app.spec.ts`
+- **详细说明**:
+  1. **平台筛选按钮组图标增强**:
+     - 在 Web 前端已完成列表顶部的平台筛选按钮（全部、抖音、YouTube、B站、TikTok、Instagram、Telegram、其他）前增加各平台官方专属图标（FontAwesome Brand / Solid 图标）。
+     - 全部使用 `faList`、抖音使用 `faDouyin`（音符）、YouTube 使用 `faYoutube`、B站使用 `faBilibili`、TikTok 使用 `faTiktok`、Instagram 使用 `faInstagram`、Telegram 使用 `faTelegram`、其他使用 `faEllipsis`。
+  2. **列表平台徽章视觉一致性**:
+     - 新增 `getPlatformIcon` 方法，在已完成列表表格的「平台」列徽章内同步显示对应的平台图标，与顶部筛选栏保持视觉统一。
+  3. **单测覆盖**:
+     - 在 `app.spec.ts` 中补充 `getPlatformIcon` 的各平台解析单元测试断言。
+
 ### 2026-09-26（第六轮）
 - **refactor(TG)**: MTProto 出口代理支持 **http**，并新增**回退到 `HTTP_PROXY`**，据此可在 compose 里删掉 `TG_PROXY_URL`，只留一个 `PROXY_URL`。
   - 关键更正：**Telethon 不读取任何环境变量代理**（不像 requests/yt-dlp 自动用 `HTTP_PROXY`），只认显式传入的 `proxy=`。所以「Telethon 支持 http 代理」≠「删掉 `TG_PROXY_URL` 就会自动用 `HTTP_PROXY`」——直接删会让 MTProto **直连**（国内必然连不上）。正解是代码显式把 `HTTP_PROXY` 解析后传给 Telethon。

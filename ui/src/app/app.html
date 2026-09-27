@@ -776,29 +776,29 @@
         <!-- 平台筛选 -->
         <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="平台筛选">
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'all'" [class.btn-outline-secondary]="donePlatformFilter !== 'all'" (click)="setDonePlatformFilter('all')">
-            全部 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.all }}</span>
+            <fa-icon [icon]="faList" class="me-1" />全部 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.all }}</span>
           </button>
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'douyin'" [class.btn-outline-secondary]="donePlatformFilter !== 'douyin'" (click)="setDonePlatformFilter('douyin')">
-            抖音 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.douyin }}</span>
+            <fa-icon [icon]="faDouyin" class="me-1" />抖音 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.douyin }}</span>
           </button>
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'youtube'" [class.btn-outline-secondary]="donePlatformFilter !== 'youtube'" (click)="setDonePlatformFilter('youtube')">
-            YouTube <span class="badge bg-secondary ms-1">{{ donePlatformCounts.youtube }}</span>
+            <fa-icon [icon]="faYoutube" class="me-1" />YouTube <span class="badge bg-secondary ms-1">{{ donePlatformCounts.youtube }}</span>
           </button>
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'bilibili'" [class.btn-outline-secondary]="donePlatformFilter !== 'bilibili'" (click)="setDonePlatformFilter('bilibili')">
-            B站 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.bilibili }}</span>
+            <fa-icon [icon]="faBilibili" class="me-1" />B站 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.bilibili }}</span>
           </button>
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'tiktok'" [class.btn-outline-secondary]="donePlatformFilter !== 'tiktok'" (click)="setDonePlatformFilter('tiktok')">
-            TikTok <span class="badge bg-secondary ms-1">{{ donePlatformCounts.tiktok }}</span>
+            <fa-icon [icon]="faTiktok" class="me-1" />TikTok <span class="badge bg-secondary ms-1">{{ donePlatformCounts.tiktok }}</span>
           </button>
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'instagram'" [class.btn-outline-secondary]="donePlatformFilter !== 'instagram'" (click)="setDonePlatformFilter('instagram')">
-            Instagram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.instagram }}</span>
+            <fa-icon [icon]="faInstagram" class="me-1" />Instagram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.instagram }}</span>
           </button>
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'telegram'" [class.btn-outline-secondary]="donePlatformFilter !== 'telegram'" (click)="setDonePlatformFilter('telegram')">
-            Telegram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.telegram }}</span>
+            <fa-icon [icon]="faTelegram" class="me-1" />Telegram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.telegram }}</span>
           </button>
           @if (donePlatformCounts.other > 0) {
             <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'other'" [class.btn-outline-secondary]="donePlatformFilter !== 'other'" (click)="setDonePlatformFilter('other')">
-              其他 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.other }}</span>
+              <fa-icon [icon]="faEllipsis" class="me-1" />其他 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.other }}</span>
             </button>
           }
         </div>
@@ -891,7 +891,7 @@
                 }
               </td>
               <td class="text-nowrap">
-                <span class="badge bg-secondary">{{ getPlatformName(entry[1].url) }}</span>
+                <span class="badge bg-secondary"><fa-icon [icon]="getPlatformIcon(entry[1].url)" class="me-1" />{{ getPlatformName(entry[1].url) }}</span>
               </td>
               <td class="text-nowrap">
                 {{ downloadTypeLabel(entry[1]) }}

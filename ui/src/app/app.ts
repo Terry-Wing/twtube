@@ -7,8 +7,9 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FontAwesomeModule } from '@fortawesome/angular-fontawesome';
 import { NgbModule, NgbTypeahead } from '@ng-bootstrap/ng-bootstrap';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { faTrashAlt, faCheckCircle, faTimesCircle, faRedoAlt, faSun, faMoon, faCheck, faCircleHalfStroke, faDownload, faExternalLinkAlt, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faSortAmountDown, faSortAmountUp, faChevronRight, faChevronDown, faUpload, faPause, faPlay, faShareNodes, faSearch, faFilter } from '@fortawesome/free-solid-svg-icons';
-import { faGithub } from '@fortawesome/free-brands-svg-icons';
+import { IconDefinition } from '@fortawesome/fontawesome-svg-core';
+import { faTrashAlt, faCheckCircle, faTimesCircle, faRedoAlt, faSun, faMoon, faCheck, faCircleHalfStroke, faDownload, faExternalLinkAlt, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faSortAmountDown, faSortAmountUp, faChevronRight, faChevronDown, faUpload, faPause, faPlay, faShareNodes, faSearch, faFilter, faList, faEllipsis } from '@fortawesome/free-solid-svg-icons';
+import { faGithub, faYoutube, faBilibili, faTiktok, faInstagram, faTelegram, faXTwitter, faFacebook } from '@fortawesome/free-brands-svg-icons';
 import { CookieService } from 'ngx-cookie-service';
 import { AddDownloadPayload, DownloadsService } from './services/downloads.service';
 import { MeTubeSocket } from './services/metube-socket.service';
@@ -238,6 +239,16 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   faShareNodes = faShareNodes;
   faSearch = faSearch;
   faFilter = faFilter;
+  faList = faList;
+  faDouyin = faTiktok;
+  faYoutube = faYoutube;
+  faBilibili = faBilibili;
+  faTiktok = faTiktok;
+  faInstagram = faInstagram;
+  faTelegram = faTelegram;
+  faXTwitter = faXTwitter;
+  faFacebook = faFacebook;
+  faEllipsis = faEllipsis;
 
   subtitleLanguages = [
     { id: 'zh-Hans', text: '中文 (简体)' },
@@ -959,6 +970,20 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     if (u.includes('twitter.com') || u.includes('x.com')) return 'X/Twitter';
     if (u.includes('facebook.com') || u.includes('fb.watch')) return 'Facebook';
     return '网页';
+  }
+
+  getPlatformIcon(url: string | undefined): IconDefinition {
+    if (!url) return this.faEllipsis;
+    const u = url.toLowerCase();
+    if (u.startsWith('tg://')) return this.faTelegram;
+    if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return this.faDouyin;
+    if (u.includes('youtube.com') || u.includes('youtu.be')) return this.faYoutube;
+    if (u.includes('bilibili.com') || u.includes('b23.tv')) return this.faBilibili;
+    if (u.includes('tiktok.com')) return this.faTiktok;
+    if (u.includes('instagram.com') || u.includes('instagr.am')) return this.faInstagram;
+    if (u.includes('twitter.com') || u.includes('x.com')) return this.faXTwitter;
+    if (u.includes('facebook.com') || u.includes('fb.watch')) return this.faFacebook;
+    return this.faEllipsis;
   }
 
   fullTitle(download: Download): string {
