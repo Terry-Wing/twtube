@@ -42,6 +42,24 @@
 
 ## 🕒 历史变更记录
 
+### 2026-11-06 - 彻底解决 YouTube 链接添加与取消时无限卡死的问题
+- **修改类型**: fix / fullstack
+- **涉及文件**:
+  - `app/ytdl.py`
+  - `ui/src/app/app.ts`
+- **改动原因与实现细节**:
+  1. **排查与根因定位**:
+     - 原版 MeTube 在调用 `__extract_info` 时未配置 `socket_timeout` 和重试保护，且运行在共享线程池未设协程超时。当 YouTube 触发风控（如 Botguard/PO Token/JS 解密）或代理连接出现 TCP 假死时，底层 Socket 永久挂起阻塞工作线程。
+     - 原版的 `cancel_add()` 仅在播放列表轮询 entry 时检测 `_add_generation`，对单视频提取完全不起作用。
+     - 前端点击“取消”时仅发起了请求，未即时注销正在等待 `/add` 响应的 RxJS 订阅，导致 UI 按钮一直处于“正在取消...”被禁用状态。
+  2. **后端超时熔断与协程可取消化 (`app/ytdl.py`)**:
+     - `__extract_info` 强制注入 `'socket_timeout': 30` 与 `'retries': 3`，防止底层 Socket 无限等待。
+     - 维护 `self._current_add_tasks: set[asyncio.Task]` 动态跟踪所有并发解析协程。
+     - 在 `add()` 中使用 `asyncio.wait_for(extract_coro, timeout=60.0)` 进行协程硬超时熔断；超时触发后记录错误条目并释放资源，不再卡住服务。
+     - `cancel_add()` 遍历活跃的 add 协程主动调用 `task.cancel()`，收到取消指令时优雅捕获 `asyncio.CancelledError` 并返回取消状态。
+  3. **前端即时状态解绑与交互重置 (`ui/src/app/app.ts`)**:
+     - 用户点击“取消”按钮时，前端立即执行 `this.addRequestSub?.unsubscribe()` 与 `this.resetAddState()`，弹出取消提示并瞬间重置按钮，恢复输入状态；同时异步通知后端停止任务，彻底避免界面卡死。
+
 ### 2026-11-06 - 支持 X (Twitter) 链接分享与推文视频/高清原图下载
 - **修改类型**: feat / fullstack
 - **涉及文件**:

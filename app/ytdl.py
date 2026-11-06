@@ -1491,10 +1491,16 @@ class DownloadQueue:
         # TG 采集不经过 queue：下载中的条目挂在这里，供 get() 并入快照，
         # 使页面刷新/重连时进行中的进度行仍然可见（详见 get()）。
         self._tg_active: dict[str, DownloadInfo] = {}
+        # 记录当前正在进行的添加/提取协程任务，支持 cancel_add 真正立即取消
+        self._current_add_tasks: set[asyncio.Task] = set()
 
     def cancel_add(self):
         self._add_generation += 1
-        log.info('Playlist add operation canceled by user')
+        active_count = len(self._current_add_tasks)
+        log.info('Cancel add requested: cancelling %d active add task(s)', active_count)
+        for task in list(self._current_add_tasks):
+            if not task.done():
+                task.cancel()
 
     @staticmethod
     def __is_channel_extraction(entry):
@@ -1783,6 +1789,8 @@ class DownloadQueue:
             'extract_flat': True,
             'ignore_no_formats_error': True,
             'noplaylist': True,
+            'socket_timeout': 30,
+            'retries': 3,
             'paths': {"home": self.config.DOWNLOAD_DIR, "temp": self.config.TEMP_DIR},
             # This is a classification pass, not a download. yt-dlp emits the
             # feed-level infojson/description/thumbnail from
@@ -2903,100 +2911,121 @@ class DownloadQueue:
         retry_entry=None,
         sponsorblock=False,
     ):
-        # 全局清洗与修复 URL（同时作用于 Web 网页端与 TG 机器人）
-        url = _clean_and_normalize_url(url)
-
-        if ytdl_options_presets is None:
-            ytdl_options_presets = []
-        # 如果未指定保存子目录，根据 URL 自动归类到对应平台文件夹
-        if not folder or not str(folder).strip():
-            folder = _detect_platform_subfolder(url)
-        log.info(
-            f'adding {url}: {download_type=} {codec=} {format=} {quality=} {already=} {folder=} {custom_name_prefix=} '
-            f'{playlist_item_limit=} {auto_start=} {split_by_chapters=} {chapter_template=} '
-            f'{subtitle_language=} {subtitle_mode=} {ytdl_options_presets=} {clip_start=} {clip_end=} {sponsorblock=}'
-        )
-        if already is None:
-            _add_gen = self._add_generation
-            self._canceled_urls.clear()
-        already = set() if already is None else already
-        if url in already:
-            log.info('recursion detected, skipping')
-            return {'status': 'ok'}
-        else:
-            already.add(url)
-        # SSRF guard: reject non-http(s) schemes and hosts resolving to
-        # internal/loopback/link-local/metadata addresses before yt-dlp fetches
-        # anything. run_in_executor because validate_url may perform a DNS lookup.
-        url_error = await asyncio.get_running_loop().run_in_executor(
-            None, partial(validate_url, url, allow_private=self.config.ALLOW_PRIVATE_ADDRESSES))
-        if url_error is not None:
-            log.warning('Rejected URL "%s": %s', url, url_error)
-            await self.__record_add_failure(
-                url, url_error, download_type, codec, format, quality, folder,
-                custom_name_prefix, playlist_item_limit, split_by_chapters, chapter_template,
-                subtitle_language, subtitle_mode, ytdl_options_presets, ytdl_options_overrides,
-                clip_start, clip_end, retry_entry,
-            )
-            return {'status': 'error', 'msg': url_error}
-        # 抖音高清直连：优先用带签名（a_bogus/X-Bogus）的原生解析器下载最高清直链，
-        # 失败则自动降级到 yt-dlp 原生提取（最多 720p）。
-        if download_type == 'video' and ('douyin.com' in url or 'iesdouyin.com' in url):
-            if await self.__try_douyin_direct(
-                url, quality, folder, custom_name_prefix,
-                subtitle_language, subtitle_mode,
-                ytdl_options_presets, ytdl_options_overrides,
-            ):
-                return {'status': 'ok'}
-        # Twitter / X 直连：优先解析推文直连媒体（支持最高码率视频与高清多图/原图），
-        # 若成功直接下载；若推文无媒体或直连失败，自动降级至 yt-dlp 原生提取。
-        if twitter_media.is_twitter_url(url):
-            if await self.__try_twitter_direct(
-                url, quality, folder, custom_name_prefix,
-                subtitle_language, subtitle_mode,
-                ytdl_options_presets, ytdl_options_overrides,
-            ):
-                return {'status': 'ok'}
+        cur_task = asyncio.current_task()
+        if cur_task:
+            self._current_add_tasks.add(cur_task)
         try:
-            entry = await asyncio.get_running_loop().run_in_executor(
-                None,
-                partial(self.__extract_info, url, ytdl_options_presets, ytdl_options_overrides),
+            # 全局清洗与修复 URL（同时作用于 Web 网页端与 TG 机器人）
+            url = _clean_and_normalize_url(url)
+
+            if ytdl_options_presets is None:
+                ytdl_options_presets = []
+            # 如果未指定保存子目录，根据 URL 自动归类到对应平台文件夹
+            if not folder or not str(folder).strip():
+                folder = _detect_platform_subfolder(url)
+            log.info(
+                f'adding {url}: {download_type=} {codec=} {format=} {quality=} {already=} {folder=} {custom_name_prefix=} '
+                f'{playlist_item_limit=} {auto_start=} {split_by_chapters=} {chapter_template=} '
+                f'{subtitle_language=} {subtitle_mode=} {ytdl_options_presets=} {clip_start=} {clip_end=} {sponsorblock=}'
             )
-        except yt_dlp.utils.YoutubeDLError as exc:
-            msg = str(exc)
-            await self.__record_add_failure(
-                url, msg, download_type, codec, format, quality, folder,
-                custom_name_prefix, playlist_item_limit, split_by_chapters, chapter_template,
-                subtitle_language, subtitle_mode, ytdl_options_presets, ytdl_options_overrides,
-                clip_start, clip_end, retry_entry,
+            if already is None:
+                _add_gen = self._add_generation
+                self._canceled_urls.clear()
+            already = set() if already is None else already
+            if url in already:
+                log.info('recursion detected, skipping')
+                return {'status': 'ok'}
+            else:
+                already.add(url)
+            # SSRF guard: reject non-http(s) schemes and hosts resolving to
+            # internal/loopback/link-local/metadata addresses before yt-dlp fetches
+            # anything. run_in_executor because validate_url may perform a DNS lookup.
+            url_error = await asyncio.get_running_loop().run_in_executor(
+                None, partial(validate_url, url, allow_private=self.config.ALLOW_PRIVATE_ADDRESSES))
+            if url_error is not None:
+                log.warning('Rejected URL "%s": %s', url, url_error)
+                await self.__record_add_failure(
+                    url, url_error, download_type, codec, format, quality, folder,
+                    custom_name_prefix, playlist_item_limit, split_by_chapters, chapter_template,
+                    subtitle_language, subtitle_mode, ytdl_options_presets, ytdl_options_overrides,
+                    clip_start, clip_end, retry_entry,
+                )
+                return {'status': 'error', 'msg': url_error}
+            # 抖音高清直连：优先用带签名（a_bogus/X-Bogus）的原生解析器下载最高清直链，
+            # 失败则自动降级到 yt-dlp 原生提取（最多 720p）。
+            if download_type == 'video' and ('douyin.com' in url or 'iesdouyin.com' in url):
+                if await self.__try_douyin_direct(
+                    url, quality, folder, custom_name_prefix,
+                    subtitle_language, subtitle_mode,
+                    ytdl_options_presets, ytdl_options_overrides,
+                ):
+                    return {'status': 'ok'}
+            # Twitter / X 直连：优先解析推文直连媒体（支持最高码率视频与高清多图/原图），
+            # 若成功直接下载；若推文无媒体或直连失败，自动降级至 yt-dlp 原生提取。
+            if twitter_media.is_twitter_url(url):
+                if await self.__try_twitter_direct(
+                    url, quality, folder, custom_name_prefix,
+                    subtitle_language, subtitle_mode,
+                    ytdl_options_presets, ytdl_options_overrides,
+                ):
+                    return {'status': 'ok'}
+            try:
+                extract_coro = asyncio.get_running_loop().run_in_executor(
+                    None,
+                    partial(self.__extract_info, url, ytdl_options_presets, ytdl_options_overrides),
+                )
+                entry = await asyncio.wait_for(extract_coro, timeout=60.0)
+            except asyncio.TimeoutError:
+                msg = f'解析视频信息超时（超过 60 秒）: {url}'
+                log.error(msg)
+                await self.__record_add_failure(
+                    url, msg, download_type, codec, format, quality, folder,
+                    custom_name_prefix, playlist_item_limit, split_by_chapters, chapter_template,
+                    subtitle_language, subtitle_mode, ytdl_options_presets, ytdl_options_overrides,
+                    clip_start, clip_end, retry_entry,
+                )
+                return {'status': 'error', 'msg': msg}
+            except yt_dlp.utils.YoutubeDLError as exc:
+                msg = str(exc)
+                await self.__record_add_failure(
+                    url, msg, download_type, codec, format, quality, folder,
+                    custom_name_prefix, playlist_item_limit, split_by_chapters, chapter_template,
+                    subtitle_language, subtitle_mode, ytdl_options_presets, ytdl_options_overrides,
+                    clip_start, clip_end, retry_entry,
+                )
+                return {'status': 'error', 'msg': msg}
+            retry_context = _compact_persisted_entry(retry_entry)
+            if isinstance(entry, dict) and retry_context is not None:
+                entry = {**entry, **copy.deepcopy(retry_context)}
+            return await self.__add_entry(
+                entry,
+                download_type,
+                codec,
+                format,
+                quality,
+                folder,
+                custom_name_prefix,
+                playlist_item_limit,
+                auto_start,
+                split_by_chapters,
+                chapter_template,
+                subtitle_language,
+                subtitle_mode,
+                ytdl_options_presets,
+                ytdl_options_overrides,
+                clip_start,
+                clip_end,
+                already,
+                _add_gen,
+                retry_entry,
+                sponsorblock=sponsorblock,
             )
-            return {'status': 'error', 'msg': msg}
-        retry_context = _compact_persisted_entry(retry_entry)
-        if isinstance(entry, dict) and retry_context is not None:
-            entry = {**entry, **copy.deepcopy(retry_context)}
-        return await self.__add_entry(
-            entry,
-            download_type,
-            codec,
-            format,
-            quality,
-            folder,
-            custom_name_prefix,
-            playlist_item_limit,
-            auto_start,
-            split_by_chapters,
-            chapter_template,
-            subtitle_language,
-            subtitle_mode,
-            ytdl_options_presets,
-            ytdl_options_overrides,
-            clip_start,
-            clip_end,
-            already,
-            _add_gen,
-            retry_entry,
-            sponsorblock=sponsorblock,
-        )
+        except asyncio.CancelledError:
+            log.info(f'添加任务已取消: {url}')
+            return {'status': 'ok', 'msg': '已取消添加'}
+        finally:
+            if cur_task:
+                self._current_add_tasks.discard(cur_task)
 
     async def retry(self, id):
         if not self.done.exists(id):

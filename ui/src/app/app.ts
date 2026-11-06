@@ -1239,15 +1239,13 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
 
   cancelAdding() {
     this.cancelRequested = true;
+    this.addRequestSub?.unsubscribe();
+    this.resetAddState();
+    this.toasts.info('已取消添加');
     this.downloads.cancelAdd().subscribe({
-      next: () => {
-        this.addRequestSub?.unsubscribe();
-        this.resetAddState();
-      },
       error: (err) => {
-        this.cancelRequested = false;
-        console.error('取消添加失败:', err?.message || err);
-      }
+        console.error('取消添加通知失败:', err?.message || err);
+      },
     });
   }
 
