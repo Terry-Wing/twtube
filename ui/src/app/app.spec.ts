@@ -550,16 +550,24 @@ describe('App', () => {
       const dl1 = { title: '抖音热舞', uploader: '小红', url: 'https://www.douyin.com/video/1', status: 'finished', filename: 'dy.mp4' } as Download;
       const dl2 = { title: 'YouTube Tutorial', uploader: 'John', url: 'https://youtube.com/watch?v=2', status: 'finished', filename: 'yt.mp4' } as Download;
       const dl3 = { title: 'B站教程', uploader: '张三', url: 'https://bilibili.com/video/av3', status: 'finished', filename: 'bili.mp4' } as Download;
+      const dl4 = { title: 'X Post', uploader: 'Elon', url: 'https://x.com/user/status/4', status: 'finished', filename: 'x.mp4' } as Download;
 
       downloads.done.set('k1', dl1);
       downloads.done.set('k2', dl2);
       downloads.done.set('k3', dl3);
+      downloads.done.set('k4', dl4);
       downloads.doneChanged.next();
 
-      expect(app.donePlatformCounts.all).toBe(3);
+      expect(app.donePlatformCounts.all).toBe(4);
       expect(app.donePlatformCounts.douyin).toBe(1);
       expect(app.donePlatformCounts.youtube).toBe(1);
       expect(app.donePlatformCounts.bilibili).toBe(1);
+      expect(app.donePlatformCounts.twitter).toBe(1);
+
+      // Filter by twitter
+      app.setDonePlatformFilter('twitter');
+      expect(app.cachedFilteredSortedDone.length).toBe(1);
+      expect(app.cachedPagedSortedDone[0][1].title).toBe('X Post');
 
       // Filter by douyin
       app.setDonePlatformFilter('douyin');
@@ -579,7 +587,7 @@ describe('App', () => {
       expect(app.totalDonePages).toBe(2);
       expect(app.cachedPagedSortedDone.length).toBe(2);
       app.setDonePage(2);
-      expect(app.cachedPagedSortedDone.length).toBe(1);
+      expect(app.cachedPagedSortedDone.length).toBe(2);
 
       // Platform Icons
       expect(app.getPlatformIcon('https://www.douyin.com/video/1')).toBe(app.faDouyin);
@@ -587,6 +595,8 @@ describe('App', () => {
       expect(app.getPlatformIcon('https://bilibili.com/video/av3')).toBe(app.faBilibili);
       expect(app.getPlatformIcon('https://tiktok.com/@user/video/4')).toBe(app.faTiktok);
       expect(app.getPlatformIcon('https://instagram.com/p/5')).toBe(app.faInstagram);
+      expect(app.getPlatformIcon('https://x.com/user/status/6')).toBe(app.faXTwitter);
+      expect(app.getPlatformIcon('https://twitter.com/user/status/7')).toBe(app.faXTwitter);
       expect(app.getPlatformIcon('tg://12345_678')).toBe(app.faTelegram);
       expect(app.getPlatformIcon('https://example.com/test.mp4')).toBe(app.faEllipsis);
     });

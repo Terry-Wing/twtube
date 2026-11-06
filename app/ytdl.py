@@ -30,6 +30,7 @@ from subscriptions import _entry_id
 from url_guard import validate_url, install_socket_guard
 from urllib.parse import urlsplit
 import douyin_hd
+import twitter_media
 import video_info
 
 log = logging.getLogger('ytdl')
@@ -48,6 +49,12 @@ def _clean_and_normalize_url(url: str) -> str:
 
     # 2. 自动清洗抖音分享文案中夹带的纯 URL (如果是网页端整段粘贴)
     if 'douyin.com' in cleaned or 'iesdouyin.com' in cleaned:
+        m = re.search(r'https?://[^\s<>"]+', cleaned)
+        if m:
+            cleaned = m.group(0)
+
+    # 3. 自动清洗 Twitter / X 分享文案中夹带的纯 URL
+    if 'twitter.com' in cleaned or 'x.com' in cleaned or 't.co/' in cleaned:
         m = re.search(r'https?://[^\s<>"]+', cleaned)
         if m:
             cleaned = m.group(0)
@@ -71,6 +78,8 @@ def _detect_platform_subfolder(url: str) -> str:
         return 'youtube'
     elif 'bilibili.com' in url_lower or 'b23.tv' in url_lower:
         return 'bilibili'
+    elif 'twitter.com' in url_lower or 'x.com' in url_lower or 't.co/' in url_lower:
+        return 'twitter'
     return 'default'
 
 
@@ -1477,6 +1486,8 @@ class DownloadQueue:
         self._live_monitor_wakeup = asyncio.Event()
         # 抖音直连下载的进行中任务，按 URL 索引，用于取消支持。
         self._douyin_tasks: dict[str, asyncio.Task] = {}
+        # Twitter/X 直连下载的进行中任务，按 URL 索引，用于取消支持。
+        self._twitter_tasks: dict[str, asyncio.Task] = {}
         # TG 采集不经过 queue：下载中的条目挂在这里，供 get() 并入快照，
         # 使页面刷新/重连时进行中的进度行仍然可见（详见 get()）。
         self._tg_active: dict[str, DownloadInfo] = {}
@@ -2382,6 +2393,287 @@ class DownloadQueue:
             except OSError:
                 pass
 
+    # ===== Twitter / X 直连媒体下载（视频与原图） =====
+
+    @staticmethod
+    def __twitter_unique_dest(directory: str, filename: str) -> str:
+        """同名文件自动递增 _1, _2 防覆盖。"""
+        stem, ext = os.path.splitext(filename)
+        if not ext:
+            ext = '.mp4'
+        candidate = os.path.join(directory, filename)
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = os.path.join(directory, f'{stem}_{counter}{ext}')
+            counter += 1
+        return candidate
+
+    @staticmethod
+    def __twitter_unique_dest_dir(directory: str, folder_name: str) -> str:
+        """同名图集文件夹自动递增 _1, _2 防覆盖。"""
+        candidate = os.path.join(directory, folder_name)
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = os.path.join(directory, f'{folder_name}_{counter}')
+            counter += 1
+        return candidate
+
+    async def __try_twitter_direct(self, url, quality, folder, custom_name_prefix,
+                                   subtitle_language, subtitle_mode,
+                                   ytdl_options_presets, ytdl_options_overrides):
+        """尝试通过 Twitter 直连解析器下载最高码率视频或高清原图。"""
+        try:
+            detail = await twitter_media.resolve_twitter_media(url)
+        except Exception as e:
+            log.warning('Twitter 直连解析异常: %s', e)
+            detail = None
+
+        if not detail or detail.get('total_count', 0) == 0:
+            return False
+
+        # 如果没有单独指定 folder，自动分流至 twitter 子目录
+        effective_folder = folder or _detect_platform_subfolder(url)
+        dldirectory, error_message = self.__calc_download_path('video', effective_folder)
+        if error_message is not None:
+            log.warning('Twitter 下载目录解析失败，降级 yt-dlp: %s', error_message)
+            return False
+
+        safe_title = twitter_media._sanitize_filename(detail['title'])
+        safe_author = twitter_media._sanitize_filename(detail['author'])
+        upload_date = detail.get('upload_date') or ''
+        name_parts = [p for p in (safe_author, upload_date, safe_title) if p]
+
+        images = detail.get('images') or []
+        videos = detail.get('videos') or []
+        is_collection = (len(images) > 1) or bool(images and videos) or (len(videos) > 1)
+
+        # 1. 多图或图文混合或多视频：保存到专属图集文件夹
+        if is_collection:
+            dest_dir = self.__twitter_unique_dest_dir(
+                dldirectory, ' - '.join(name_parts))
+            dl = DownloadInfo(
+                id=detail['id'],
+                title=detail['title'],
+                url=url,
+                quality='best',
+                download_type='images',
+                codec='auto',
+                format='jpeg',
+                folder=effective_folder,
+                custom_name_prefix=custom_name_prefix,
+                error=None,
+                entry=None,
+                playlist_item_limit=0,
+                split_by_chapters=False,
+                chapter_template=None,
+                subtitle_language=subtitle_language,
+                subtitle_mode=subtitle_mode,
+                ytdl_options_presets=ytdl_options_presets,
+                ytdl_options_overrides=ytdl_options_overrides,
+                uploader=detail.get('author') or '',
+                upload_date=detail.get('upload_date') or '',
+            )
+            dl.status = 'pending'
+            await self.notifier.added(dl)
+
+            task = bg_tasks.create_task(
+                self.__twitter_images_download_worker(dl, detail, dest_dir),
+                name='twitter_images_download',
+            )
+            self._twitter_tasks[url] = task
+            return True
+
+        # 2. 单张图片
+        if len(images) == 1 and not videos:
+            img_url = images[0]
+            ext = '.png' if '.png' in img_url.lower() else '.jpg'
+            dest_path = self.__twitter_unique_dest(
+                dldirectory, ' - '.join(name_parts) + ext)
+            dl = DownloadInfo(
+                id=detail['id'],
+                title=detail['title'],
+                url=url,
+                quality='best',
+                download_type='images',
+                codec='auto',
+                format='jpeg',
+                folder=effective_folder,
+                custom_name_prefix=custom_name_prefix,
+                error=None,
+                entry=None,
+                playlist_item_limit=0,
+                split_by_chapters=False,
+                chapter_template=None,
+                subtitle_language=subtitle_language,
+                subtitle_mode=subtitle_mode,
+                ytdl_options_presets=ytdl_options_presets,
+                ytdl_options_overrides=ytdl_options_overrides,
+                uploader=detail.get('author') or '',
+                upload_date=detail.get('upload_date') or '',
+            )
+            dl.status = 'pending'
+            await self.notifier.added(dl)
+
+            task = bg_tasks.create_task(
+                self.__twitter_single_image_worker(dl, img_url, dest_path),
+                name='twitter_image_download',
+            )
+            self._twitter_tasks[url] = task
+            return True
+
+        # 3. 单个视频
+        dest_path = self.__twitter_unique_dest(
+            dldirectory, ' - '.join(name_parts) + '.mp4')
+
+        dl = DownloadInfo(
+            id=detail['id'],
+            title=detail['title'],
+            url=url,
+            quality=quality or 'best',
+            download_type='video',
+            codec='auto',
+            format='mp4',
+            folder=effective_folder,
+            custom_name_prefix=custom_name_prefix,
+            error=None,
+            entry=None,
+            playlist_item_limit=0,
+            split_by_chapters=False,
+            chapter_template=None,
+            subtitle_language=subtitle_language,
+            subtitle_mode=subtitle_mode,
+            ytdl_options_presets=ytdl_options_presets,
+            ytdl_options_overrides=ytdl_options_overrides,
+            uploader=detail.get('author') or '',
+            upload_date=detail.get('upload_date') or '',
+        )
+        dl.status = 'pending'
+        await self.notifier.added(dl)
+
+        task = bg_tasks.create_task(
+            self.__twitter_download_worker(dl, videos[0], dest_path),
+            name='twitter_download',
+        )
+        self._twitter_tasks[url] = task
+        return True
+
+    async def __twitter_single_image_worker(self, dl, img_url, dest_path):
+        try:
+            dl.status = 'downloading'
+            dl.percent = 10
+            await self.notifier.updated(dl)
+            await twitter_media.download_stream(
+                img_url, dest_path,
+                is_canceled=lambda: dl.url not in self._twitter_tasks,
+            )
+            dl.status = 'finished'
+            dl.percent = 100
+            dl.filename = os.path.relpath(dest_path, self.config.DOWNLOAD_DIR)
+            dl.size = os.path.getsize(dest_path) if os.path.exists(dest_path) else 0
+            dl.msg = '图片下载完成'
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        except asyncio.CancelledError:
+            log.info('Twitter 图片下载已取消: %s', dl.title)
+            self.__twitter_cleanup_partial(dest_path)
+            await self.notifier.canceled(dl.url)
+        except Exception as exc:
+            log.error('Twitter 图片下载失败: %s', exc)
+            self.__twitter_cleanup_partial(dest_path)
+            dl.status = 'error'
+            dl.error = str(exc)
+            dl.msg = str(exc)
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        finally:
+            self._twitter_tasks.pop(dl.url, None)
+
+    async def __twitter_images_download_worker(self, dl, detail, dest_dir):
+        async def _progress(completed, total):
+            dl.status = 'downloading'
+            dl.percent = round((completed / total) * 100.0, 1) if total else 0
+            dl.msg = f'已下载 {completed}/{total} 项'
+            await self.notifier.updated(dl)
+
+        try:
+            dl.status = 'downloading'
+            await self.notifier.updated(dl)
+            saved = await twitter_media.download_images_and_media(
+                detail, dest_dir, progress_cb=_progress,
+                is_canceled=lambda: dl.url not in self._twitter_tasks,
+            )
+            if not saved:
+                raise RuntimeError('推文媒体下载失败，未能保存任何文件')
+            dl.status = 'finished'
+            dl.percent = 100
+            dl.filename = os.path.relpath(dest_dir, self.config.DOWNLOAD_DIR)
+            dl.msg = f'推文媒体下载完成，共 {len(saved)} 个文件'
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        except asyncio.CancelledError:
+            log.info('Twitter 媒体集合下载已取消: %s', dl.title)
+            await self.notifier.canceled(dl.url)
+        except Exception as exc:
+            log.error('Twitter 媒体集合下载失败: %s', exc)
+            dl.status = 'error'
+            dl.error = str(exc)
+            dl.msg = str(exc)
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        finally:
+            self._twitter_tasks.pop(dl.url, None)
+
+    async def __twitter_download_worker(self, dl, video_url, dest_path):
+        last_update = [0.0]
+
+        async def _progress(downloaded, total):
+            dl.size = total or None
+            if total:
+                dl.percent = round(downloaded * 100.0 / total, 1)
+            now = time.monotonic()
+            if now - last_update[0] >= 1.0:
+                last_update[0] = now
+                await self.notifier.updated(dl)
+
+        try:
+            await twitter_media.download_stream(
+                video_url, dest_path, progress_cb=_progress,
+                is_canceled=lambda: dl.url not in self._twitter_tasks,
+            )
+            # Twitter 视频同样探测真实分辨率/帧率补进文件名
+            if getattr(self.config, 'FILENAME_VIDEO_INFO', True):
+                dest_path = await asyncio.get_running_loop().run_in_executor(
+                    None, video_info.tag_video_file, dest_path)
+            dl.status = 'finished'
+            dl.percent = 100
+            dl.filename = os.path.relpath(dest_path, self.config.DOWNLOAD_DIR)
+            dl.size = os.path.getsize(dest_path) if os.path.exists(dest_path) else 0
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        except asyncio.CancelledError:
+            log.info('Twitter 下载已取消: %s', dl.title)
+            self.__twitter_cleanup_partial(dest_path)
+            await self.notifier.canceled(dl.url)
+        except Exception as exc:
+            log.error('Twitter 直连下载失败: %s', exc)
+            self.__twitter_cleanup_partial(dest_path)
+            dl.status = 'error'
+            dl.error = str(exc)
+            dl.msg = str(exc)
+            await self.done.put(Download(None, None, None, None, dl.quality, dl.format, {}, dl))
+            await self.notifier.completed(dl)
+        finally:
+            self._twitter_tasks.pop(dl.url, None)
+
+    @staticmethod
+    def __twitter_cleanup_partial(dest_path):
+        partial = dest_path + '.part'
+        if os.path.exists(partial):
+            try:
+                os.remove(partial)
+            except OSError:
+                pass
+
     # ===== Telegram 媒体采集（视频/图片文件，非 yt-dlp 下载） =====
 
     # 这些后缀走“视频”路径；其余文档（压缩包等）一律当普通文件处理。
@@ -2656,6 +2948,15 @@ class DownloadQueue:
                 ytdl_options_presets, ytdl_options_overrides,
             ):
                 return {'status': 'ok'}
+        # Twitter / X 直连：优先解析推文直连媒体（支持最高码率视频与高清多图/原图），
+        # 若成功直接下载；若推文无媒体或直连失败，自动降级至 yt-dlp 原生提取。
+        if twitter_media.is_twitter_url(url):
+            if await self.__try_twitter_direct(
+                url, quality, folder, custom_name_prefix,
+                subtitle_language, subtitle_mode,
+                ytdl_options_presets, ytdl_options_overrides,
+            ):
+                return {'status': 'ok'}
         try:
             entry = await asyncio.get_running_loop().run_in_executor(
                 None,
@@ -2805,8 +3106,8 @@ class DownloadQueue:
         for id in ids:
             # Track URL so playlist add loop won't re-queue it
             self._canceled_urls.add(id)
-            # 抖音直连下载：取消进行中的流式任务。
-            task = self._douyin_tasks.get(id)
+            # 抖音/Twitter 直连下载：取消进行中的流式任务。
+            task = self._douyin_tasks.get(id) or self._twitter_tasks.get(id)
             if task is not None:
                 task.cancel()
                 continue

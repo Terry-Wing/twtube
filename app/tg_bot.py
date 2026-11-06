@@ -162,6 +162,8 @@ class TelegramBotManager:
             return 'youtube'
         elif 'bilibili.com' in url_lower or 'b23.tv' in url_lower:
             return 'bilibili'
+        elif 'twitter.com' in url_lower or 'x.com' in url_lower or 't.co/' in url_lower:
+            return 'twitter'
         return 'default'
 
     # 平台显示名（与 web 端 getPlatformName 保持一致）
@@ -171,6 +173,7 @@ class TelegramBotManager:
         'instagram': 'Instagram',
         'youtube': 'YouTube',
         'bilibili': 'B站',
+        'twitter': 'X (Twitter)',
         'default': '网页',
     }
 

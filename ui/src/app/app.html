@@ -796,6 +796,9 @@
           <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'telegram'" [class.btn-outline-secondary]="donePlatformFilter !== 'telegram'" (click)="setDonePlatformFilter('telegram')">
             <fa-icon [icon]="faTelegram" class="me-1" />Telegram <span class="badge bg-secondary ms-1">{{ donePlatformCounts.telegram }}</span>
           </button>
+          <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'twitter'" [class.btn-outline-secondary]="donePlatformFilter !== 'twitter'" (click)="setDonePlatformFilter('twitter')">
+            <fa-icon [icon]="faXTwitter" class="me-1" />X <span class="badge bg-secondary ms-1">{{ donePlatformCounts.twitter }}</span>
+          </button>
           @if (donePlatformCounts.other > 0) {
             <button type="button" class="btn" [class.btn-primary]="donePlatformFilter === 'other'" [class.btn-outline-secondary]="donePlatformFilter !== 'other'" (click)="setDonePlatformFilter('other')">
               <fa-icon [icon]="faEllipsis" class="me-1" />其他 <span class="badge bg-secondary ms-1">{{ donePlatformCounts.other }}</span>

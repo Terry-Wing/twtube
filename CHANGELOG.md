@@ -42,6 +42,37 @@
 
 ## 🕒 历史变更记录
 
+### 2026-11-06 - 支持 X (Twitter) 链接分享与推文视频/高清原图下载
+- **修改类型**: feat / fullstack
+- **涉及文件**:
+  - `app/twitter_media.py` (新增)
+  - `app/ytdl.py`
+  - `app/tg_bot.py`
+  - `ui/src/app/app.ts`
+  - `ui/src/app/app.html`
+  - `ui/src/app/app.spec.ts`
+  - `app/tests/test_twitter_media.py` (新增)
+- **改动原因与实现细节**:
+  1. **支持 X / Twitter 推文链接全解析 (`app/twitter_media.py`)**:
+     - 自动清洗移动端/网页端分享文案，提取推文 Snowflake ID，并支持 `t.co` 短链接追踪。
+     - 采用高可用双通道解析：首选 FxTwitter v2 API，备用 VxTwitter API，直接提取推文的最高码率 MP4 视频直链、原画质量图片（自动带 `?name=orig`）、作者信息与正文。
+     - 若外部接口不可用且为视频推文，无缝降级至 `yt-dlp` 原生管道。
+  2. **多形态媒体智能归档 (`app/ytdl.py`)**:
+     - **单视频**: 流式下载后通过 `video_info` 自动探测真实分辨率与帧率并追加标签（如 `[1080x1920 60fps]`）。
+     - **单图片**: 直连下载并保存为独立高清图片文件。
+     - **多图 / 混合媒体**: 自动创建 `[博主名] - [发布日期] - [推文标题]` 专属目录，批量下载全部图片与视频，并生成 `tweet.txt` 完整留存推文原文。
+     - 自动分流下载到 `twitter/` 子目录；接入任务取消与断点防覆盖机制。
+  3. **Telegram 机器人自动识别与推送 (`app/tg_bot.py`)**:
+     - 发送 X/Twitter 链接时自动识别为 `X (Twitter)` 平台并归流到 `twitter` 目录。
+     - 下载完成后回传通知，展示博主名、发布日期与推文标题。
+  4. **Web 界面视觉与筛选适配 (`ui/src/app/`)**:
+     - `PlatformKey` 与 `PlatformCounts` 扩展 `twitter` 类型。
+     - 已完成列表顶部增加 X 平台专属筛选按钮与计数徽章。
+     - 表格平台徽章同步展示官方 `faXTwitter` 专属图标。
+  5. **测试覆盖**:
+     - 前端单元测试补充 Twitter 筛选与图标断言，100 用例全过。
+     - 新增 `test_twitter_media.py` 后端单元测试，全量编译与逻辑验证无误。
+
 ### 2026-09-27 - 已完成列表平台筛选与列表徽章增加平台专属图标
 - **修改类型**: feat / ui
 - **涉及文件**:

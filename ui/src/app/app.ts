@@ -37,7 +37,7 @@ import {
 import { EtaPipe, SpeedPipe, FileSizePipe } from './pipes';
 import { SelectAllCheckboxComponent, ItemCheckboxComponent, ToastContainerComponent } from './components/';
 
-export type PlatformKey = 'douyin' | 'youtube' | 'bilibili' | 'tiktok' | 'instagram' | 'telegram' | 'other';
+export type PlatformKey = 'douyin' | 'youtube' | 'bilibili' | 'tiktok' | 'instagram' | 'twitter' | 'telegram' | 'other';
 
 export interface PlatformCounts {
   all: number;
@@ -46,6 +46,7 @@ export interface PlatformCounts {
   bilibili: number;
   tiktok: number;
   instagram: number;
+  twitter: number;
   telegram: number;
   other: number;
 }
@@ -173,6 +174,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     bilibili: 0,
     tiktok: 0,
     instagram: 0,
+    twitter: 0,
     telegram: 0,
     other: 0,
   };
@@ -1616,6 +1618,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'bilibili';
     if (u.includes('tiktok.com')) return 'tiktok';
     if (u.includes('instagram.com') || u.includes('instagr.am')) return 'instagram';
+    if (u.includes('twitter.com') || u.includes('x.com')) return 'twitter';
     return 'other';
   }
 
@@ -1700,6 +1703,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
       bilibili: 0,
       tiktok: 0,
       instagram: 0,
+      twitter: 0,
       telegram: 0,
       other: 0,
     };
