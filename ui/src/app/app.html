@@ -769,7 +769,13 @@
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDelSelected (click)="delSelectedDownloads('done')"><fa-icon [icon]="faTrashAlt" />&nbsp; 清除选中记录</button>
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasCompletedDone" (click)="clearCompletedDownloads()"><fa-icon [icon]="faCheckCircle" />&nbsp; 清空所有已完成</button>
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="clearFailedDownloads()"><fa-icon [icon]="faTimesCircle" />&nbsp; 清空所有失败</button>
-        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone" (click)="retryFailedDownloads()"><fa-icon [icon]="faRedoAlt" />&nbsp; 重试失败任务</button>
+        <button type="button" class="btn btn-link text-decoration-none px-0 me-4" [disabled]="!hasFailedDone || isRetryingAny()" (click)="retryFailedDownloads()">
+          @if (isRetryingAny()) {
+            <fa-icon [icon]="faSpinner" [spin]="true" />&nbsp; 正在重试失败任务...
+          } @else {
+            <fa-icon [icon]="faRedoAlt" />&nbsp; 重试失败任务
+          }
+        </button>
         <button type="button" class="btn btn-link text-decoration-none px-0 me-4" disabled #doneDownloadSelected (click)="downloadSelectedFiles()"><fa-icon [icon]="faDownload" />&nbsp; 保存选中文件到本地</button>
       </div>
       <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -918,7 +924,18 @@
               <td>
                 <div class="d-flex">
                   @if (entry[1].status === 'error') {
-                    <button type="button" class="btn btn-link" [attr.aria-label]="'重试下载 ' + entry[1].title" (click)="retryDownload(entry[0], entry[1])"><fa-icon [icon]="faRedoAlt" /></button>
+                    <button type="button" class="btn btn-link"
+                      [class.text-warning]="isRetrying(entry[0])"
+                      [disabled]="isRetrying(entry[0])"
+                      [attr.aria-label]="'重试下载 ' + entry[1].title"
+                      [title]="isRetrying(entry[0]) ? '正在重新解析并加入队列...' : '重试下载 ' + entry[1].title"
+                      (click)="retryDownload(entry[0], entry[1])">
+                      @if (isRetrying(entry[0])) {
+                        <fa-icon [icon]="faSpinner" [spin]="true" />
+                      } @else {
+                        <fa-icon [icon]="faRedoAlt" />
+                      }
+                    </button>
                   }
                   @if (entry[1].filename) {
                     <a href="{{buildDownloadLink(entry[1])}}" download class="btn btn-link" [attr.aria-label]="'保存到本地 ' + entry[1].title"><fa-icon [icon]="faDownload" /></a>

@@ -8,7 +8,7 @@ import { FontAwesomeModule } from '@fortawesome/angular-fontawesome';
 import { NgbModule, NgbTypeahead } from '@ng-bootstrap/ng-bootstrap';
 import { NgSelectModule } from '@ng-select/ng-select';
 import { IconDefinition } from '@fortawesome/fontawesome-svg-core';
-import { faTrashAlt, faCheckCircle, faTimesCircle, faRedoAlt, faSun, faMoon, faCheck, faCircleHalfStroke, faDownload, faExternalLinkAlt, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faSortAmountDown, faSortAmountUp, faChevronRight, faChevronDown, faUpload, faPause, faPlay, faShareNodes, faSearch, faFilter, faList, faEllipsis } from '@fortawesome/free-solid-svg-icons';
+import { faTrashAlt, faCheckCircle, faTimesCircle, faRedoAlt, faSpinner, faSun, faMoon, faCheck, faCircleHalfStroke, faDownload, faExternalLinkAlt, faFileImport, faFileExport, faCopy, faClock, faTachometerAlt, faSortAmountDown, faSortAmountUp, faChevronRight, faChevronDown, faUpload, faPause, faPlay, faShareNodes, faSearch, faFilter, faList, faEllipsis } from '@fortawesome/free-solid-svg-icons';
 import { faGithub, faYoutube, faBilibili, faTiktok, faInstagram, faTelegram, faXTwitter, faFacebook } from '@fortawesome/free-brands-svg-icons';
 import { CookieService } from 'ngx-cookie-service';
 import { AddDownloadPayload, DownloadsService } from './services/downloads.service';
@@ -131,6 +131,8 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   checkingSubscriptionIds = new Set<string>();
   checkingAllSubscriptions = false;
   checkingSelectedSubscriptions = false;
+  retryingKeys = new Set<string>();
+  retryingAllFailed = false;
   hasCookies = false;
   cookieUploadInProgress = false;
   themes: Theme[] = Themes;
@@ -219,6 +221,7 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   faCheckCircle = faCheckCircle;
   faTimesCircle = faTimesCircle;
   faRedoAlt = faRedoAlt;
+  faSpinner = faSpinner;
   faSun = faSun;
   faMoon = faMoon;
   faCheck = faCheck;
@@ -1284,16 +1287,43 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
     }
   }
 
+  isRetrying(key: string): boolean {
+    return this.retryingKeys.has(key);
+  }
+
+  isRetryingAny(): boolean {
+    return this.retryingAllFailed || this.retryingKeys.size > 0;
+  }
+
   retryDownload(key: string, download: Download) {
+    if (this.retryingKeys.has(key)) {
+      return;
+    }
+    this.retryingKeys.add(key);
+    this.cdr.markForCheck();
+    this.toasts.info(`正在重新加入下载队列: ${download.title || key}`);
+
     this.downloads.retry(key)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((status: Status) => {
-        if (status.status === 'error') {
-          this.toasts.error(`重试任务 ${download.title} 失败: ${status.msg}`);
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => {
+          this.retryingKeys.delete(key);
           this.cdr.markForCheck();
-          return;
+        })
+      )
+      .subscribe({
+        next: (status: Status) => {
+          if (status.status === 'error') {
+            this.toasts.error(`重试任务 ${download.title} 失败: ${status.msg}`);
+            this.cdr.markForCheck();
+            return;
+          }
+          this.downloads.delById('done', [key]).subscribe();
+        },
+        error: (err) => {
+          this.toasts.error(`重试请求异常: ${err?.message || err}`);
+          this.cdr.markForCheck();
         }
-        this.downloads.delById('done', [key]).subscribe();
       });
   }
 
@@ -1318,11 +1348,49 @@ export class App implements AfterViewInit, OnInit, OnDestroy {
   }
 
   retryFailedDownloads() {
+    const failedKeys: [string, Download][] = [];
     this.downloads.done.forEach((dl, key) => {
-      if (dl.status === 'error') {
-        this.retryDownload(key, dl);
+      if (dl.status === 'error' && !this.retryingKeys.has(key)) {
+        failedKeys.push([key, dl]);
       }
     });
+
+    if (failedKeys.length === 0) {
+      return;
+    }
+
+    this.retryingAllFailed = true;
+    this.cdr.markForCheck();
+    this.toasts.info(`已开始批量重试 ${failedKeys.length} 个失败任务...`);
+
+    let completedCount = 0;
+    for (const [key, dl] of failedKeys) {
+      this.retryingKeys.add(key);
+      this.downloads.retry(key)
+        .pipe(
+          takeUntilDestroyed(this.destroyRef),
+          finalize(() => {
+            this.retryingKeys.delete(key);
+            completedCount++;
+            if (completedCount >= failedKeys.length) {
+              this.retryingAllFailed = false;
+            }
+            this.cdr.markForCheck();
+          })
+        )
+        .subscribe({
+          next: (status: Status) => {
+            if (status.status === 'error') {
+              this.toasts.error(`重试任务 ${dl.title} 失败: ${status.msg}`);
+            } else {
+              this.downloads.delById('done', [key]).subscribe();
+            }
+          },
+          error: (err) => {
+            console.error('批量重试异常:', err);
+          }
+        });
+    }
   }
 
   private static readonly DOWNLOAD_BATCH_SIZE = 10;
