@@ -113,23 +113,45 @@ def format_tag(width: int, height: int, fps: str = '') -> str:
     return f'[{width}x{height}]'
 
 
+def _trim_bytes(s: str, max_bytes: int) -> str:
+    """按 UTF-8 字节数安全缩短字符串，确保多字节字符完整。"""
+    encoded = s.encode('utf-8', 'surrogatepass')
+    if len(encoded) <= max_bytes:
+        return s
+    return encoded[:max_bytes].decode('utf-8', 'ignore').rstrip()
+
+
 def _unique_path(path: str) -> str:
-    """目标已存在时依次尝试 ``_1``、``_2``…… 避免覆盖同名文件。"""
+    """目标已存在时依次尝试 ``_1``、``_2``…… 避免覆盖同名文件，且保证长度不超限。"""
     if not os.path.exists(path):
         return path
-    stem, ext = os.path.splitext(path)
+    dir_name, base_name = os.path.split(path)
+    stem, ext = os.path.splitext(base_name)
     counter = 1
-    while os.path.exists(f'{stem}_{counter}{ext}'):
+    while True:
+        suffix = f'_{counter}{ext}'
+        s_bytes = len(suffix.encode('utf-8', 'surrogatepass'))
+        max_stem_bytes = max(255 - s_bytes, 16)
+        c_stem = _trim_bytes(stem, max_stem_bytes)
+        candidate = os.path.join(dir_name, f'{c_stem}_{counter}{ext}')
+        if not os.path.exists(candidate):
+            return candidate
         counter += 1
-    return f'{stem}_{counter}{ext}'
 
 
 def append_tag(path: str, tag: str) -> str:
     """把标签插到扩展名前：``标题.mp4`` → ``标题 [2160x3840 60fps].mp4``。"""
     if not tag:
         return path
-    stem, ext = os.path.splitext(path)
-    return _unique_path(f'{stem} {tag}{ext}')
+    dir_name, base_name = os.path.split(path)
+    stem, ext = os.path.splitext(base_name)
+    tag_part = f' {tag}'
+    # 单文件名最大 255 字节，预留 10 字节给可能的重名序号 _1~_99
+    ext_bytes = len(ext.encode('utf-8', 'surrogatepass'))
+    tag_bytes = len(tag_part.encode('utf-8', 'surrogatepass'))
+    max_stem_bytes = max(255 - ext_bytes - tag_bytes - 10, 16)
+    trimmed_stem = _trim_bytes(stem, max_stem_bytes)
+    return _unique_path(os.path.join(dir_name, f'{trimmed_stem}{tag_part}{ext}'))
 
 
 def tag_video_file(path: str) -> str:

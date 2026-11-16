@@ -395,6 +395,49 @@ def _trim_to_name_max(path: str) -> str:
     return os.path.join(directory, (trimmed or '_') + ext)
 
 
+def _trim_stem_bytes(directory: str, stem: str, reserve_bytes: int = 48) -> str:
+    """按 UTF-8 字节数安全缩短 stem，确保多字节字符完整且总长度不超限。"""
+    encoded = stem.encode('utf-8', 'surrogatepass')
+    limit = max(_name_max_bytes(directory) - reserve_bytes, _MIN_STEM_BYTES)
+    if len(encoded) <= limit:
+        return stem
+    return encoded[:limit].decode('utf-8', 'ignore').rstrip()
+
+
+def _unique_dest_file(directory: str, filename: str, default_ext: str = '.mp4', reserve_bytes: int = 48) -> str:
+    """生成不重名且严格受限于文件系统最大字节数的文件路径。"""
+    base_name = os.path.basename(filename)
+    stem, ext = os.path.splitext(base_name)
+    if not ext:
+        ext = default_ext
+    trimmed_stem = _trim_stem_bytes(
+        directory, stem, reserve_bytes=reserve_bytes + len(ext.encode('utf-8', 'surrogatepass')))
+    candidate = os.path.join(directory, (trimmed_stem or '_') + ext)
+    counter = 1
+    while os.path.exists(candidate):
+        suffix = f'_{counter}{ext}'
+        s_bytes = len(suffix.encode('utf-8', 'surrogatepass'))
+        c_stem = _trim_stem_bytes(directory, stem, reserve_bytes=reserve_bytes + s_bytes)
+        candidate = os.path.join(directory, f'{c_stem}_{counter}{ext}')
+        counter += 1
+    return candidate
+
+
+def _unique_dest_dir(directory: str, folder_name: str, reserve_bytes: int = 32) -> str:
+    """生成不重名且严格受限于文件系统最大字节数的目录路径。"""
+    base_name = os.path.basename(folder_name)
+    trimmed = _trim_stem_bytes(directory, base_name, reserve_bytes=reserve_bytes)
+    candidate = os.path.join(directory, trimmed or '_')
+    counter = 1
+    while os.path.exists(candidate):
+        suffix = f'_{counter}'
+        s_bytes = len(suffix.encode('utf-8', 'surrogatepass'))
+        c_name = _trim_stem_bytes(directory, base_name, reserve_bytes=reserve_bytes + s_bytes)
+        candidate = os.path.join(directory, f'{c_name}_{counter}')
+        counter += 1
+    return candidate
+
+
 class _ConfinedYoutubeDL(yt_dlp.YoutubeDL):
     """A ``YoutubeDL`` that refuses to emit any output path outside the allowed roots.
 
@@ -2186,26 +2229,13 @@ class DownloadQueue:
 
     @staticmethod
     def __douyin_unique_dest(directory: str, filename: str) -> str:
-        """同名文件自动递增 _1, _2 防覆盖。"""
-        stem, ext = os.path.splitext(filename)
-        if not ext:
-            ext = '.mp4'
-        candidate = os.path.join(directory, filename)
-        counter = 1
-        while os.path.exists(candidate):
-            candidate = os.path.join(directory, f'{stem}_{counter}{ext}')
-            counter += 1
-        return candidate
+        """同名文件自动递增 _1, _2 防覆盖，且保证单文件名绝不超过文件系统 NAME_MAX。"""
+        return _unique_dest_file(directory, filename, default_ext='.mp4', reserve_bytes=48)
 
     @staticmethod
     def __douyin_unique_dest_dir(directory: str, folder_name: str) -> str:
-        """同名图集文件夹自动递增 _1, _2 防覆盖。"""
-        candidate = os.path.join(directory, folder_name)
-        counter = 1
-        while os.path.exists(candidate):
-            candidate = os.path.join(directory, f'{folder_name}_{counter}')
-            counter += 1
-        return candidate
+        """同名图集文件夹自动递增 _1, _2 防覆盖，且保证文件夹名不超过限制。"""
+        return _unique_dest_dir(directory, folder_name, reserve_bytes=32)
 
     async def __try_douyin_direct(self, url, quality, folder, custom_name_prefix,
                                   subtitle_language, subtitle_mode,
@@ -2405,26 +2435,13 @@ class DownloadQueue:
 
     @staticmethod
     def __twitter_unique_dest(directory: str, filename: str) -> str:
-        """同名文件自动递增 _1, _2 防覆盖。"""
-        stem, ext = os.path.splitext(filename)
-        if not ext:
-            ext = '.mp4'
-        candidate = os.path.join(directory, filename)
-        counter = 1
-        while os.path.exists(candidate):
-            candidate = os.path.join(directory, f'{stem}_{counter}{ext}')
-            counter += 1
-        return candidate
+        """同名文件自动递增 _1, _2 防覆盖，且保证单文件名绝不超过文件系统 NAME_MAX。"""
+        return _unique_dest_file(directory, filename, default_ext='.mp4', reserve_bytes=48)
 
     @staticmethod
     def __twitter_unique_dest_dir(directory: str, folder_name: str) -> str:
-        """同名图集文件夹自动递增 _1, _2 防覆盖。"""
-        candidate = os.path.join(directory, folder_name)
-        counter = 1
-        while os.path.exists(candidate):
-            candidate = os.path.join(directory, f'{folder_name}_{counter}')
-            counter += 1
-        return candidate
+        """同名图集文件夹自动递增 _1, _2 防覆盖，且保证文件夹名不超过限制。"""
+        return _unique_dest_dir(directory, folder_name, reserve_bytes=32)
 
     async def __try_twitter_direct(self, url, quality, folder, custom_name_prefix,
                                    subtitle_language, subtitle_mode,

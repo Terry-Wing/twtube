@@ -18,6 +18,8 @@ yt-dlp 自带的抖音提取器直接调用 ``aweme/v1/web/aweme/detail/`` 接�
 注意：抖音会不定期更换签名算法，届时需要与上游 f2 重新同步这两个文件。
 """
 
+from __future__ import annotations
+
 import os
 import re
 import json
@@ -368,9 +370,13 @@ def extract_music(aweme: dict) -> str | None:
     return urls[0] if urls else None
 
 
-def _sanitize_filename(name: str) -> str:
+def _sanitize_filename(name: str, max_bytes: int = 150) -> str:
+    """过滤文件名非法字符并按 UTF-8 字节数安全截断。"""
     name = re.sub(r'[\\/:*?"<>|\r\n\t]+', '_', name).strip()
-    return name[:180] or 'douyin'
+    encoded = name.encode('utf-8', 'surrogatepass')
+    if len(encoded) > max_bytes:
+        name = encoded[:max_bytes].decode('utf-8', 'ignore').rstrip(' _-')
+    return name or 'douyin'
 
 
 async def resolve_douyin_video(url: str, cookies_path: str | None = None) -> dict | None:

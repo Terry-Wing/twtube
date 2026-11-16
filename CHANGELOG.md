@@ -42,6 +42,25 @@
 
 ## 🕒 历史变更记录
 
+### 2026-11-16 - 彻底解决超长文案视频下载因文件名超限报错 [Errno 36] 的问题
+- **修改类型**: fix / core
+- **涉及文件**:
+  - `app/douyin_hd.py`
+  - `app/twitter_media.py`
+  - `app/ytdl.py`
+  - `app/video_info.py`
+  - `app/tests/test_douyin_enhancements.py`
+- **改动原因与实现细节**:
+  1. **问题排查与根因分析**:
+     - 用户反馈最新下载的抖音视频报错 `[Errno 36] File name too long`。
+     - 经定位，该视频包含 136 字超长文案，UTF-8 编码下加上作者与日期等信息达到 328 字节，超过了 Linux / POSIX 文件系统的硬上限 255 字节（`NAME_MAX`）。原逻辑按纯字符数（如 180 字符）截断，未能防范中文字符（3字节/字）引发的文件名溢出，导致创建 `.part` 文件时直接被内核拒绝。
+  2. **按 UTF-8 字节数安全智能截断 (`Byte-aware Truncation`)**:
+     - **清洗端加固**：在 `douyin_hd._sanitize_filename` 与 `twitter_media._sanitize_filename` 中增加 `max_bytes` 控制，采用 `encode('utf-8', 'surrogatepass')[:limit].decode('utf-8', 'ignore')`，确保截断时绝不切断多字节汉字或 emoji。
+     - **路径分配端加固**：在 `app/ytdl.py` 中引入 `_trim_stem_bytes`、`_unique_dest_file` 与 `_unique_dest_dir`，为扩展名、`.part` 临时后缀、重名序号及后续视频参数标签预留 48 字节安全余量，将基础文件名牢牢限制在 207 字节以内。
+     - **参数探测端加固**：在 `video_info.append_tag` 与 `_unique_path` 中增加单文件名 255 字节上限保护，在追加 `[1080x1920 60fps]` 时若接近上限则自动裁剪 stem 末尾，保证重命名 100% 成功。
+  3. **单元测试与回归防护**:
+     - 在 `test_douyin_enhancements.py` 中增加对 136 字长标题清洗、路径生成与 `.part` 文件实际落盘的测试用例。
+
 ### 2026-11-08 - 更新 YouTube 登录 Cookie & 全面优化重试按钮响应与交互反馈
 - **修改类型**: feat / fix / ui
 - **涉及文件**:

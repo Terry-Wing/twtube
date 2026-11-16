@@ -53,13 +53,16 @@ def is_twitter_url(url: str) -> bool:
     return 'twitter.com' in u or 'x.com' in u or 't.co/' in u
 
 
-def _sanitize_filename(name: str) -> str:
-    """过滤文件名非法字符并去除多余空白。"""
+def _sanitize_filename(name: str, max_bytes: int = 150) -> str:
+    """过滤文件名非法字符并去除多余空白，且按 UTF-8 字节数安全截断。"""
     if not name:
         return ''
     cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', name)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ._')
-    return cleaned[:100] or 'tweet'
+    encoded = cleaned.encode('utf-8', 'surrogatepass')
+    if len(encoded) > max_bytes:
+        cleaned = encoded[:max_bytes].decode('utf-8', 'ignore').rstrip(' ._')
+    return cleaned or 'tweet'
 
 
 def _format_beijing_date(epoch_seconds: int | float | None) -> str:
