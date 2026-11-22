@@ -12,7 +12,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # 用 PAT（而非默认 GITHUB_TOKEN）拉取并推送：
           # 使用 GITHUB_TOKEN 产生的 push 不会触发其它 workflow（GitHub 防递归规则），
@@ -22,7 +22,7 @@ jobs:
           token: ${{ secrets.GH_PAT }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
